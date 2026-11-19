@@ -223,3 +223,17 @@ test('settings: refused without the page token, from another site, or for a fold
     assert.equal((await s.call('POST', '/fix', { text: '部落格標題', to: 'y', url: 'https://x.example.com/' })).json.status, 'unset');
   } finally { await s.close(); }
 });
+
+test('fix: words already changed by an earlier edit are reported as a stale page, not as missing', async () => {
+  const s = await boot();
+  try {
+    await s.call('POST', '/fix', { text: '立即免費開始', to: '先用再說', url: PAGE });
+    const pendingStill = await s.call('POST', '/fix', { text: '立即免費開始', to: '再改一次', url: PAGE });
+    assert.deepEqual([pendingStill.json.status, pendingStill.json.to], ['stale', '先用再說']);
+    await s.call('POST', '/submit', { url: PAGE });
+    // the page has not been redeployed yet and still shows the old sentence around it
+    const afterSend = await s.call('POST', '/fix', { text: '<h1>立即免費開始</h1>'.replace(/<[^>]+>/g, ''), to: '第三次', url: PAGE });
+    assert.equal(afterSend.json.status, 'stale');
+    assert.equal((await s.call('POST', '/fix', { text: '從來沒有的字', to: 'x', url: PAGE })).json.status, 'notfound');
+  } finally { await s.close(); }
+});

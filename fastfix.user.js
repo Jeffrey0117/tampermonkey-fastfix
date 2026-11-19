@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         fastFix
 // @namespace    fastfix
-// @version      0.3.0
+// @version      0.3.1
 // @description  Alt + 點網頁上的字，直接改掉自己網站原始碼裡的那段字，也能調它的大小、粗細、顏色。改完幾處再一次送出。
 // @homepageURL  https://github.com/Jeffrey0117/tampermonkey-fastfix
 // @updateURL    https://raw.githubusercontent.com/Jeffrey0117/tampermonkey-fastfix/main/fastfix.user.js
@@ -361,6 +361,9 @@
         }
       } else if (data.status === 'toomany') {
         say('有 ' + data.count + ' 處一樣的字。先選取長一點的一段，再 Alt + 點。');
+      } else if (data.status === 'stale') {
+        closeBox();
+        toast('這段字已經改過了（「' + data.from + '」→「' + data.to + '」），這一頁顯示的還是舊的。重新整理看看；還是舊的就是還沒部署完。', true, LONG_TOAST_MS);
       } else if (data.status === 'unset') {
         closeBox();
         toast('這個網站還沒設定專案。點這裡去設定頁加一行。', true, LONG_TOAST_MS,

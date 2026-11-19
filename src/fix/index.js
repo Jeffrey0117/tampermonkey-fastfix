@@ -5,11 +5,12 @@ const { isDirty, commitFiles, push } = require('./git');
 const { matchesInRepo } = require('./search');
 const { newRiskyChars, replaceAt, contextScore } = require('./match');
 const { parseLook, describeLook, applyLook } = require('./style');
-const { readState, writeState, repoPending, withPending } = require('./store');
+const { readState, writeState, repoPending, withPending, withSent } = require('./store');
 
 const MAX_CHOICES = 12;
 const MAX_TEXT = 2000;
 const SUMMARY_MAX = 60;
+const LOOK_MARK = '（樣式）';
 
 const reply = (status, body) => ({ status, body });
 const refuse = (status, error) => reply(status, { ok: false, error });
@@ -27,6 +28,15 @@ const pendingCount = (state, repo) => {
 function projectFor(state, host) {
   const repo = state.sites[host];
   return repo && fs.existsSync(repo) ? repo : null;
+}
+
+// The words are not in the source, but an earlier edit here replaced them:
+// the page is simply still showing the old version.
+function alreadyChanged(state, repo, text) {
+  const pending = repoPending(state, repo);
+  const history = [...(state.sent[repo] || []), ...pending.unpushed, ...pending.edits];
+  const isLook = (e) => e.to.startsWith(LOOK_MARK);
+  return [...history].reverse().find((e) => !isLook(e) && (text.includes(e.from) || e.from.includes(text))) || null;
 }
 
 const publicMatch = ({ file, nth, line, context }) => ({ file, nth, line, context });
@@ -58,7 +68,11 @@ async function locate({ stateDir }, input) {
   const repoName = path.basename(repo);
 
   const matches = await matchesInRepo(repo, from);
-  if (!matches.length) return { reply: reply(200, { ok: true, status: 'notfound', repoName }) };
+  if (!matches.length) {
+    const earlier = alreadyChanged(state, repo, from);
+    if (earlier) return { reply: reply(200, { ok: true, status: 'stale', repoName, from: earlier.from, to: earlier.to }) };
+    return { reply: reply(200, { ok: true, status: 'notfound', repoName }) };
+  }
 
   const pick = input.pick && typeof input.pick === 'object' ? input.pick : null;
   const hints = { before: typeof input.before === 'string' ? input.before : '', after: typeof input.after === 'string' ? input.after : '' };
@@ -110,7 +124,7 @@ async function restyle(config, input) {
   const { repo, match, from } = where.found;
   return applyChange(config, where.found,
     (content) => applyLook({ repo, file: match.file, content, match, look }),
-    { from, to: `（樣式）${describeLook(look)}` });
+    { from, to: `${LOOK_MARK}${describeLook(look)}` });
 }
 
 function pending({ stateDir }, input) {
@@ -146,7 +160,7 @@ async function submit({ stateDir }, input) {
   } catch (err) {
     return refuse(502, `送不出去：${err.message}`);
   }
-  writeState(stateDir, withPending(state, repo, { edits: [], unpushed: [] }));
+  writeState(stateDir, withSent(withPending(state, repo, { edits: [], unpushed: [] }), repo, entry.unpushed));
   return reply(200, { ok: true, repoName: path.basename(repo), count: entry.unpushed.length, commit });
 }
 
