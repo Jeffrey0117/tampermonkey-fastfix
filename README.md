@@ -47,7 +47,8 @@
 
 | | 是什麼 |
 |---|---|
-| `fastfix.user.js` | 油猴腳本：接 Alt + 點、畫輸入框、把「舊字 → 新字」送出去 |
+| `fastfix.user.js` | 裝進 Tampermonkey 的那支。只做一件事：每次開網頁去本機服務拿 `client.js` 來跑，所以裝一次就好，之後不用更新 |
+| `client.js` | 真正做事的程式：接 Alt + 點、畫輸入框、把「舊字 → 新字」送出去。改了它，重新整理網頁就是新的 |
 | `server.js` | 本機服務：只聽 `127.0.0.1:4480`，在你的 repo 裡找字、換掉、commit、push。Node，零依賴 |
 
 ## 安裝
@@ -97,7 +98,8 @@ npm run autostart   # 放一個開機自動啟動的捷徑，並且現在就啟�
 | `GET /pending?host=` | 要金鑰 | 還沒送出幾處，以及上一次送出還在等的狀態 |
 | `GET /setup` | 只給本機直接開 | 設定頁：網域對專案的表、安裝腳本 |
 | `POST /setup/sites`、`POST /setup/sites/remove` | 只給設定頁的表單 | 加、移除一筆網域對專案 |
-| `GET /fastfix.user.js` | 不用金鑰 | 腳本本體（裡面沒有金鑰） |
+| `GET /fastfix.user.js` | 不用金鑰 | 裝進 Tampermonkey 的那支（裡面沒有金鑰） |
+| `GET /client.js` | 不用金鑰 | 那支腳本每次開網頁來拿的程式（裡面沒有金鑰） |
 
 金鑰用 `Authorization: Bearer <FASTFIX_TOKEN>`。POST 只收 `application/json`：網頁可以偷偷跨站送
 `text/plain`，但送 JSON 加金鑰標頭會被瀏覽器擋下來，所以別的網頁沒辦法叫它改你的檔。

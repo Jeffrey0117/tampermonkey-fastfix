@@ -9,6 +9,7 @@ const { isDirectLocalVisit, isSetupPageVisit, renderSetupPage, SETUP_HEADERS } =
 
 const MAX_BODY_BYTES = 256 * 1024;
 const USERSCRIPT_PATH = path.join(__dirname, '..', 'fastfix.user.js');
+const CLIENT_PATH = path.join(__dirname, '..', 'client.js');
 const FIX_ROUTES = ['POST /fix', 'POST /style', 'POST /submit', 'POST /landed', 'GET /pending'];
 const SETTINGS_ROUTES = ['POST /setup/sites', 'POST /setup/sites/remove'];
 
@@ -114,6 +115,12 @@ async function route(req, res, config) {
   if (key === 'GET /fastfix.user.js') {
     res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
     return res.end(fs.readFileSync(USERSCRIPT_PATH));
+  }
+
+  // what the installed script runs: read from disk every time, so an edit is live on the next page load
+  if (key === 'GET /client.js') {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(fs.readFileSync(CLIENT_PATH));
   }
 
   if (FIX_ROUTES.includes(key)) {

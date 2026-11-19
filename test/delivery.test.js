@@ -202,3 +202,18 @@ test('setup page: lets the userscript re-read it, so an edit to this very page c
     assert.match(res.headers.get('content-security-policy'), /connect-src 'self'/);
   } finally { await s.close(); }
 });
+
+test('the installed script is only a loader; the code it runs comes fresh from the service', async () => {
+  const s = await boot();
+  try {
+    const loader = await (await fetch(s.url + '/fastfix.user.js')).text();
+    assert.match(loader, /\/client\.js/);
+    assert.doesNotMatch(loader, /@updateURL|\/submit|\/fix/, 'nothing in it that would ever need an update');
+    const res = await fetch(s.url + '/client.js');
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    const code = await res.text();
+    assert.match(code, /\/submit/);
+    assert.doesNotMatch(code, /==UserScript==/);
+    new Function(code);   // it must parse on its own, the loader runs it this way
+  } finally { await s.close(); }
+});
