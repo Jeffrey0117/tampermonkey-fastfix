@@ -10,7 +10,7 @@ const { isDirectLocalVisit, isSetupPageVisit, renderSetupPage, SETUP_HEADERS } =
 const MAX_BODY_BYTES = 256 * 1024;
 const USERSCRIPT_PATH = path.join(__dirname, '..', 'fastfix.user.js');
 const CLIENT_PATH = path.join(__dirname, '..', 'client.js');
-const FIX_ROUTES = ['POST /fix','POST /submit', 'POST /landed', 'GET /pending'];
+const FIX_ROUTES = ['POST /fix', 'POST /submit', 'POST /landed', 'GET /pending'];
 const SETTINGS_ROUTES = ['POST /setup/sites', 'POST /setup/sites/remove'];
 
 class HttpError extends Error {
@@ -103,7 +103,7 @@ async function route(req, res, config) {
     return res.end(renderSetupPage({
       token: config.token,
       roots: config.roots,
-      ...listSettings(config),
+      ...(await listSettings(config)),
       host: searchParams.get('host') || '',
       message: searchParams.get('msg') || '',
       error: searchParams.get('err') || '',

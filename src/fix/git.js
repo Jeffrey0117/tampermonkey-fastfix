@@ -54,4 +54,4 @@ async function catchUp(repo) {
 
 const push = (repo) => git(repo, ['push'], { timeout: PUSH_TIMEOUT_MS });
 
-module.exports = { grepFiles, isDirty, commitFiles, push, catchUp };
+module.exports = { git, grepFiles, isDirty, commitFiles, push, catchUp };

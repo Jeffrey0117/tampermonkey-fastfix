@@ -1,7 +1,7 @@
 'use strict';
-const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { askCloudpipe } = require('./cloudpipe');
 
 // What happens once the edits are pushed, so the site really shows them.
 // A setting per site (see settings.js):
@@ -11,7 +11,6 @@ const { spawn } = require('node:child_process');
 
 const PROJECT_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const MAX_COMMAND = 500;
-const TRIGGER_TIMEOUT_MS = 15000;
 
 function parseAfter(kind, value) {
   const text = String(value || '').trim();
@@ -28,30 +27,6 @@ function parseAfter(kind, value) {
 function describeAfter(after) {
   if (!after) return 'push 就會自己部署';
   return after.kind === 'cloudpipe' ? `叫 CloudPipe 部署 ${after.id}` : `跑 ${after.command}`;
-}
-
-// The CloudPipe key: CLOUDPIPE_TOKEN, or the serviceToken in the file CLOUDPIPE_CONFIG points at.
-function cloudpipeToken({ token, configFile }) {
-  if (token) return token;
-  if (!configFile) return '';
-  try { return JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^﻿/, '')).serviceToken || ''; } catch (_) { return ''; }
-}
-
-async function askCloudpipe(cloudpipe, id) {
-  const token = cloudpipeToken(cloudpipe || {});
-  if (!token) throw new Error('沒有 CloudPipe 的金鑰（.env 的 CLOUDPIPE_TOKEN 或 CLOUDPIPE_CONFIG）');
-  let res;
-  try {
-    res = await fetch(`${cloudpipe.url}/api/_admin/deploy/projects/${encodeURIComponent(id)}/deploy`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: '{}',
-      signal: AbortSignal.timeout(TRIGGER_TIMEOUT_MS),
-    });
-  } catch (_) {
-    throw new Error('連不上 CloudPipe');
-  }
-  if (!res.ok) throw new Error(`CloudPipe 回了 ${res.status}`);
 }
 
 // Started and left alone: the command may restart this very service.

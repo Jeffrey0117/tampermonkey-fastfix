@@ -71,7 +71,25 @@ function siteRows(sites, token) {
     </tr>`).join('\n');
 }
 
-function renderSetupPage({ token, sites, projects, roots, host = '', message = '', error = '' }) {
+// Sites that need no line above: CloudPipe says which project they are.
+function cloudpipeSection(rows) {
+  if (!rows.length) return '';
+  const table = (list) => `<table>
+    ${list.map(({ host, name, reason }) => `<tr>
+      <td>${escapeHtml(host)}</td>
+      <td${name ? '' : ' class="none"'}>${escapeHtml(name || reason)}</td>
+    </tr>`).join('\n')}
+  </table>`;
+  const ready = rows.filter((r) => r.name);
+  const not = rows.filter((r) => !r.name);
+  return `
+  <h2>CloudPipe 上的站</h2>
+  <p>這些不用設定，CloudPipe 知道它們是哪個專案。上面那張表有同一個網域的話，以上面為準。</p>
+  ${ready.length ? table(ready) : ''}
+  ${not.length ? `<details><summary>另外 ${not.length} 個現在改不了（要改就在上面加一行，指定資料夾）</summary>${table(not)}</details>` : ''}`;
+}
+
+function renderSetupPage({ token, sites, projects, roots, fromCloudpipe = [], host = '', message = '', error = '' }) {
   const note = error ? `<div class="msg bad">${escapeHtml(error)}</div>` : (message ? `<div class="msg">${escapeHtml(message)}</div>` : '');
   return `<!doctype html>
 <html lang="zh-Hant">
@@ -107,6 +125,7 @@ function renderSetupPage({ token, sites, projects, roots, host = '', message = '
     <button type="submit">加入</button>
   </form>
   <p style="margin-top:10px;font-size:14px">專案清單來自 <code>${escapeHtml(roots.join('、'))}</code></p>
+${cloudpipeSection(fromCloudpipe)}
 
   <h2>安裝腳本</h2>
   <ol>

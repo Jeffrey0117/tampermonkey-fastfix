@@ -7,6 +7,8 @@ const { newRiskyChars, replaceAt, contextScore } = require('./match');
 const { withBreaks, linesOf } = require('./breaks');
 const { runAfter } = require('./after-send');
 const { nextDelivery, openDelivery, closeDelivery } = require('./delivery');
+const { siteFor } = require('./site');
+const { deployOf } = require('./cloudpipe');
 const { readState, writeState, repoPending, withPending, withSent, withDelivery } = require('./store');
 
 const MAX_CHOICES = 12;
@@ -35,12 +37,6 @@ const pendingCount = (state, repo) => {
   const p = repoPending(state, repo);
   return p.edits.length + p.unpushed.length;
 };
-
-// The project for a site is a setting (see settings.js); nothing here guesses it.
-function projectFor(state, host) {
-  const repo = state.sites[host];
-  return repo && fs.existsSync(repo) ? repo : null;
-}
 
 // The words are not in the source, but an earlier edit here replaced them:
 // the page is simply still showing the old version.
@@ -73,7 +69,8 @@ function clearWinner(matches, repo, hints) {
 
 // Finds the one place in the site's project where the clicked words live.
 // Gives back either { found } or the { reply } that ends the request.
-async function locate({ stateDir }, input) {
+async function locate(config, input) {
+  const { stateDir } = config;
   const from = typeof input.text === 'string' ? input.text.trim() : '';
   const host = hostOf(input.url);
   if (!from) return { reply: refuse(400, '沒有內容') };
@@ -81,8 +78,9 @@ async function locate({ stateDir }, input) {
   if (!host) return { reply: refuse(400, '不知道是哪個網站') };
 
   const state = readState(stateDir);
-  const repo = projectFor(state, host);
-  if (!repo) return { reply: reply(200, { ok: true, status: 'unset', host }) };
+  const site = await siteFor(config, state, host);
+  const repo = site.repo;
+  if (!repo) return { reply: reply(200, { ok: true, status: 'unset', host, ...(site.reason ? { reason: site.reason } : {}) }) };
   const repoName = path.basename(repo);
   try {
     await catchUp(repo);
@@ -149,11 +147,29 @@ async function edit(config, input) {
   }, { from: current, to, page: pageOf(input.url), path: spotOf(input.path) });
 }
 
-function pending({ stateDir }, input) {
-  const state = readState(stateDir);
-  const repo = projectFor(state, String(input.host || ''));
+// A send that waits on a CloudPipe deploy: ask CloudPipe how that deploy is doing.
+// A deploy that failed turns the delivery into "failed", so the chip says so and offers to try again.
+async function withDeploy(config, repo, delivery) {
+  if (!delivery || delivery.status !== 'waiting' || !delivery.cloudpipe) return delivery;
+  const deploy = await deployOf(config.cloudpipe, delivery.cloudpipe, delivery.commit);
+  if (!deploy) return delivery;
+  if (deploy.stage !== 'failed') return { ...delivery, stage: deploy.stage };
+  return inTurn(() => {
+    const state = readState(config.stateDir);
+    const now = state.deliveries[repo];
+    if (!now || now.status !== 'waiting' || now.commit !== delivery.commit) return openDelivery(now);
+    const failed = { ...now, status: 'failed', error: `CloudPipe 部署失敗：${deploy.error}` };
+    writeState(config.stateDir, withDelivery(state, repo, failed));
+    return openDelivery(failed);
+  });
+}
+
+async function pending(config, input) {
+  const state = readState(config.stateDir);
+  const { repo } = await siteFor(config, state, String(input.host || ''));
   if (!repo) return reply(200, { ok: true, count: 0 });
-  const delivery = openDelivery(state.deliveries[repo]);
+  const open = openDelivery(state.deliveries[repo]);
+  const delivery = await withDeploy(config, repo, open ? { ...open, commit: state.deliveries[repo].commit, cloudpipe: state.deliveries[repo].cloudpipe } : null);
   return reply(200, { ok: true, count: pendingCount(state, repo), repoName: path.basename(repo), ...(delivery ? { delivery } : {}) });
 }
 
@@ -187,7 +203,8 @@ async function submit(config, input) {
   const { stateDir } = config;
   let state = readState(stateDir);
   const host = hostOf(input.url);
-  const repo = projectFor(state, host);
+  const site = await siteFor(config, state, host);
+  const repo = site.repo;
   const entry = repo ? repoPending(state, repo) : { edits: [], unpushed: [] };
   const last = repo ? state.deliveries[repo] : null;
   const nothingNew = !entry.edits.length && !entry.unpushed.length;
@@ -204,17 +221,20 @@ async function submit(config, input) {
     state = writeState(stateDir, withSent(withPending(state, repo, { edits: [], unpushed: [] }), repo, sentEdits));
   }
 
-  const error = await runAfter(config, repo, state.after[host]).then(() => '', (err) => `叫部署失敗：${err.message}`);
-  const delivery = nextDelivery(last, sentEdits, { commit, page: pageOf(input.url), error });
+  // a CloudPipe site deploys on the push; trying again after a failure has to ask for the deploy
+  const after = site.cloudpipe && nothingNew ? { kind: 'cloudpipe', id: site.cloudpipe } : site.after;
+  const error = await runAfter(config, repo, after).then(() => '', (err) => `叫部署失敗：${err.message}`);
+  const delivery = nextDelivery(last, sentEdits, { commit, page: pageOf(input.url), error, cloudpipe: site.cloudpipe });
   writeState(stateDir, withDelivery(state, repo, delivery));
   return reply(200, { ok: true, repoName: path.basename(repo), count: sentEdits.length, commit, delivery: openDelivery(delivery) });
 }
 
 // The page was seen with the new words ("live"), or the person stopped waiting ("dismissed").
-function landed({ stateDir }, input) {
+async function landed(config, input) {
+  const { stateDir } = config;
   if (!LANDINGS.includes(input.result)) return refuse(400, '結果看不懂');
   const state = readState(stateDir);
-  const repo = projectFor(state, hostOf(input.url));
+  const { repo } = await siteFor(config, state, hostOf(input.url));
   const delivery = repo ? state.deliveries[repo] : null;
   if (delivery && openDelivery(delivery)) writeState(stateDir, withDelivery(state, repo, closeDelivery(delivery, input.result)));
   return reply(200, { ok: true });
@@ -229,7 +249,7 @@ const inTurn = (fn) => {
 };
 
 function handle(key, input, config) {
-  if (key === 'GET /pending') return Promise.resolve(pending(config, input));
+  if (key === 'GET /pending') return pending(config, input);
   if (key === 'POST /fix') return inTurn(() => edit(config, input));
   if (key === 'POST /landed') return inTurn(() => landed(config, input));
   return inTurn(() => submit(config, input));

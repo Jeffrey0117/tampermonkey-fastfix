@@ -21,7 +21,7 @@ function addCheck(checks, edit, fallbackPage) {
     { page, path: path || (earlier ? earlier.path : ''), from: earlier ? earlier.from : edit.from, to: edit.to }];
 }
 
-function nextDelivery(previous, edits, { commit, page, error }) {
+function nextDelivery(previous, edits, { commit, page, error, cloudpipe }) {
   const carried = previous && OPEN.includes(previous.status) ? previous.checks : [];
   return {
     at: new Date().toISOString(),
@@ -29,6 +29,7 @@ function nextDelivery(previous, edits, { commit, page, error }) {
     count: edits.length || (previous ? previous.count : 0),
     status: error ? 'failed' : 'waiting',
     error: error || '',
+    ...(cloudpipe ? { cloudpipe } : {}),          // the CloudPipe project whose deploy this send is waiting for
     checks: edits.reduce((checks, e) => addCheck(checks, e, page), carried),
   };
 }

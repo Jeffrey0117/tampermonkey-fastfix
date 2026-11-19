@@ -217,3 +217,16 @@ Alt + 點的當下，腳本算出那個元素在頁面上的位置（`body > mai
 字大小、粗細、顏色的調整整塊拿掉：Jeff 實際上只改字，沒用過。少了 `src/fix/style.js`、`src/fix/element.js`、`POST /style`，
 編輯框只剩輸入欄和送出鈕。要加回來從 git 歷史拿（這個 commit 的前一版）。順便刪了沒人用的實驗腳本
 `scripts/browser/fingerprint-experiment.js`、`class-edit-dry-run.js`。
+
+## 接 CloudPipe（2026-11-20）
+
+Jeff 核准：fastFix 維持獨立工具，多一個「從 CloudPipe 讀」的來源。
+
+- **網域對專案**：讀 CloudPipe 的專案清單與它的網域（跟它自己的 router 同一條規則：`<id>.<domain>` 加自訂網域）。設定頁那張表優先。
+- **改哪一份**：專案資料夾底下跟專案同名的 repo。三個條件都要成立：不是 CloudPipe 正在跑的那份（用 CloudPipe 設定檔的位置加專案的 directory 算出來比對）、origin 是 CloudPipe 部署的 repo、在它部署的分支上。不成立就回原因，不改。
+  - 原本想用「資料夾裡有部署留下的記號檔」來認，實際一查開發用的資料夾也有那些檔，所以不用。
+- **送出後**：有 webhook 的專案 push 就會部署，不另外叫；沒有的才叫。失敗後按再叫一次一律直接叫 CloudPipe。
+- **部署狀態**：送出後每 6 秒問一次 CloudPipe 這個 commit 的部署。建置中會顯示「CloudPipe 部署中」，失敗把這次送出標成失敗並帶原因。看網頁上字有沒有出現這件事照舊，CloudPipe 說成功不算數，字出現才算。
+- **CloudPipe 連不上**：當作不知道這些站，用上一次讀到的清單撐 30 秒內的請求；手動設定的站不受影響。
+- 測試：`test/cloudpipe.test.js`。把「正在跑的那份」的判斷拿掉，其中兩個測試會紅（實際驗過）。
+- 實際讀這台的 CloudPipe：89 個網域裡 41 個可以直接改，48 個不行，幾乎都是這台電腦的專案資料夾底下沒有同名的 repo（要改就在設定頁指定）。

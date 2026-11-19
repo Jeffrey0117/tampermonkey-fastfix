@@ -19,6 +19,7 @@
   const DEEP_EVERY = 10;                 // every so many looks, the page's scripts are read too
   const SCRIPT_CAP = 40;
   const RELOAD_AFTER_MS = 600;
+  const ASK_EVERY = 3;                   // every so many looks, the service is asked how the deploy is doing
 
   const endpoint = () => String(GM_getValue('endpoint', DEFAULT_ENDPOINT)).replace(/\/+$/, '');
   const token = () => String(GM_getValue('token', ''));
@@ -269,6 +270,7 @@
   }
 
   // ---- the chip, bottom right: what is not sent yet, and how far the last send got ----
+  let saidBuilding = false;
   let watching = 0;                      // changes whenever the chip is redrawn, so an old wait stops
   let watchTimer = 0;
 
@@ -301,6 +303,14 @@
       return;
     }
     if (round === 0) setChip('已送出，等網站更新', [], true);
+    // a site CloudPipe deploys: ask now and then how that deploy is doing, so a failed one is said at once
+    if (round > 0 && round % ASK_EVERY === 0) {
+      call('GET', '/pending?host=' + encodeURIComponent(location.host)).then((data) => {
+        if (mine !== watching || !data.delivery) return;
+        if (data.delivery.status === 'failed') showState({ count: data.count || 0, delivery: data.delivery });
+        else if (data.delivery.stage === 'building' && !saidBuilding) { saidBuilding = true; setChip('已送出，CloudPipe 部署中', [], true); }
+      }).catch(() => { /* the page itself is still being watched */ });
+    }
     allLive(delivery.checks, round).then((live) => {
       if (mine !== watching) return;
       if (live === 'live') land();
@@ -321,6 +331,7 @@
   }
 
   function showState({ count, delivery }) {
+    saidBuilding = false;
     watching += 1;
     clearTimeout(watchTimer);
     if (count) { setChip('已改 ' + count + ' 處，還沒送出', [['送出', submitNow]]); return; }
@@ -472,7 +483,7 @@
         toast('這段字已經改過了（「' + data.from + '」→「' + data.to + '」），這一頁顯示的還是舊的。重新整理看看；還是舊的就是還沒部署完。', true, LONG_TOAST_MS);
       } else if (data.status === 'unset') {
         closeBox();
-        toast('這個網站還沒設定專案。點這裡去設定頁加一行。', true, LONG_TOAST_MS,
+        toast(data.reason ? data.reason + '。點這裡去設定頁指定資料夾。' : '這個網站還沒設定專案。點這裡去設定頁加一行。', true, LONG_TOAST_MS,
           () => window.open(endpoint() + '/setup?host=' + encodeURIComponent(location.host), '_blank'));
       } else {
         closeBox();
