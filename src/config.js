@@ -31,6 +31,13 @@ function loadConfig(env = process.env) {
     stateDir: merged.FASTFIX_HOME || path.join(os.homedir(), '.fastfix'),
     // Where your site repos live. Default: the folder this repo sits in.
     roots: (merged.FASTFIX_ROOTS || path.resolve(__dirname, '..', '..')).split(path.delimiter).filter(Boolean),
+    // Only used by sites set to "ask CloudPipe to deploy". The key comes from CLOUDPIPE_TOKEN,
+    // or from the serviceToken in the CloudPipe config file CLOUDPIPE_CONFIG points at.
+    cloudpipe: {
+      url: String(merged.CLOUDPIPE_URL || 'http://localhost:8787').replace(/\/+$/, ''),
+      token: merged.CLOUDPIPE_TOKEN || '',
+      configFile: merged.CLOUDPIPE_CONFIG || '',
+    },
   };
 }
 

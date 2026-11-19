@@ -5,18 +5,25 @@ const { isDirty, commitFiles, push } = require('./git');
 const { matchesInRepo } = require('./search');
 const { newRiskyChars, replaceAt, contextScore } = require('./match');
 const { parseLook, describeLook, applyLook } = require('./style');
-const { readState, writeState, repoPending, withPending, withSent } = require('./store');
+const { runAfter } = require('./after-send');
+const { LOOK_MARK, isLookEdit, nextDelivery, openDelivery, closeDelivery } = require('./delivery');
+const { readState, writeState, repoPending, withPending, withSent, withDelivery } = require('./store');
 
 const MAX_CHOICES = 12;
 const MAX_TEXT = 2000;
 const SUMMARY_MAX = 60;
-const LOOK_MARK = '（樣式）';
+const LANDINGS = ['live', 'dismissed'];
 
 const reply = (status, body) => ({ status, body });
 const refuse = (status, error) => reply(status, { ok: false, error });
 
 function hostOf(url) {
   try { return new URL(url).host; } catch (_) { return ''; }
+}
+
+// The page an edit was made on, without the #part: where to look for the new words later.
+function pageOf(url) {
+  try { const u = new URL(url); return u.origin + u.pathname + u.search; } catch (_) { return ''; }
 }
 
 const pendingCount = (state, repo) => {
@@ -35,8 +42,7 @@ function projectFor(state, host) {
 function alreadyChanged(state, repo, text) {
   const pending = repoPending(state, repo);
   const history = [...(state.sent[repo] || []), ...pending.unpushed, ...pending.edits];
-  const isLook = (e) => e.to.startsWith(LOOK_MARK);
-  return [...history].reverse().find((e) => !isLook(e) && (text.includes(e.from) || e.from.includes(text))) || null;
+  return [...history].reverse().find((e) => !isLookEdit(e) && (text.includes(e.from) || e.from.includes(text))) || null;
 }
 
 const publicMatch = ({ file, nth, line, context }) => ({ file, nth, line, context });
@@ -113,7 +119,7 @@ async function edit(config, input) {
   const where = await locate(config, input);
   if (where.reply) return where.reply;
   const { match } = where.found;
-  return applyChange(config, where.found, (content) => ({ content: replaceAt(content, match.index, match.length, to) }), { from, to });
+  return applyChange(config, where.found, (content) => ({ content: replaceAt(content, match.index, match.length, to) }), { from, to, page: pageOf(input.url) });
 }
 
 async function restyle(config, input) {
@@ -124,14 +130,15 @@ async function restyle(config, input) {
   const { repo, match, from } = where.found;
   return applyChange(config, where.found,
     (content) => applyLook({ repo, file: match.file, content, match, look }),
-    { from, to: `${LOOK_MARK}${describeLook(look)}` });
+    { from, to: `${LOOK_MARK}${describeLook(look)}`, page: pageOf(input.url) });
 }
 
 function pending({ stateDir }, input) {
   const state = readState(stateDir);
   const repo = projectFor(state, String(input.host || ''));
   if (!repo) return reply(200, { ok: true, count: 0 });
-  return reply(200, { ok: true, count: pendingCount(state, repo), repoName: path.basename(repo) });
+  const delivery = openDelivery(state.deliveries[repo]);
+  return reply(200, { ok: true, count: pendingCount(state, repo), repoName: path.basename(repo), ...(delivery ? { delivery } : {}) });
 }
 
 const clip = (s) => (s.length > SUMMARY_MAX ? `${s.slice(0, SUMMARY_MAX)}…` : s).replace(/\s+/g, ' ');
@@ -142,26 +149,59 @@ const commitMessage = (edits) => [
   ...edits.map((e) => `- ${e.file}: 「${clip(e.from)}」→「${clip(e.to)}」`),
 ].join('\n');
 
-async function submit({ stateDir }, input) {
-  let state = readState(stateDir);
-  const repo = projectFor(state, hostOf(input.url));
-  let entry = repo ? repoPending(state, repo) : { edits: [], unpushed: [] };
-  if (!entry.edits.length && !entry.unpushed.length) return refuse(400, '沒有要送出的修改');
-
+// Commit and push what is pending. Nothing is lost when the push fails.
+async function pushPending(stateDir, state, repo, entry) {
   let commit = '';
-  try {
-    if (entry.edits.length) {
-      const files = [...new Set(entry.edits.map((e) => e.file))];
-      commit = await commitFiles(repo, files, commitMessage(entry.edits));
-      entry = { edits: [], unpushed: [...entry.unpushed, ...entry.edits] };
-      state = writeState(stateDir, withPending(state, repo, entry));
-    }
-    await push(repo);
-  } catch (err) {
-    return refuse(502, `送不出去：${err.message}`);
+  let next = entry;
+  let saved = state;
+  if (entry.edits.length) {
+    const files = [...new Set(entry.edits.map((e) => e.file))];
+    commit = await commitFiles(repo, files, commitMessage(entry.edits));
+    next = { edits: [], unpushed: [...entry.unpushed, ...entry.edits] };
+    saved = writeState(stateDir, withPending(state, repo, next));
   }
-  writeState(stateDir, withSent(withPending(state, repo, { edits: [], unpushed: [] }), repo, entry.unpushed));
-  return reply(200, { ok: true, repoName: path.basename(repo), count: entry.unpushed.length, commit });
+  await push(repo);
+  return { commit, sentEdits: next.unpushed, state: saved };
+}
+
+// Send: push, then do what this site needs to really show it (see after-send.js),
+// and leave a delivery that stays "waiting" until the page is seen with the new words.
+// With nothing new to send, a delivery whose deploy call failed is tried again.
+async function submit(config, input) {
+  const { stateDir } = config;
+  let state = readState(stateDir);
+  const host = hostOf(input.url);
+  const repo = projectFor(state, host);
+  const entry = repo ? repoPending(state, repo) : { edits: [], unpushed: [] };
+  const last = repo ? state.deliveries[repo] : null;
+  const nothingNew = !entry.edits.length && !entry.unpushed.length;
+  if (nothingNew && !(last && last.status === 'failed')) return refuse(400, '沒有要送出的修改');
+
+  let commit = nothingNew ? last.commit : '';
+  let sentEdits = [];
+  if (!nothingNew) {
+    try {
+      ({ commit, sentEdits, state } = await pushPending(stateDir, state, repo, entry));
+    } catch (err) {
+      return refuse(502, `送不出去：${err.message}`);
+    }
+    state = writeState(stateDir, withSent(withPending(state, repo, { edits: [], unpushed: [] }), repo, sentEdits));
+  }
+
+  const error = await runAfter(config, repo, state.after[host]).then(() => '', (err) => `叫部署失敗：${err.message}`);
+  const delivery = nextDelivery(last, sentEdits, { commit, page: pageOf(input.url), error });
+  writeState(stateDir, withDelivery(state, repo, delivery));
+  return reply(200, { ok: true, repoName: path.basename(repo), count: sentEdits.length, commit, delivery: openDelivery(delivery) });
+}
+
+// The page was seen with the new words ("live"), or the person stopped waiting ("dismissed").
+function landed({ stateDir }, input) {
+  if (!LANDINGS.includes(input.result)) return refuse(400, '結果看不懂');
+  const state = readState(stateDir);
+  const repo = projectFor(state, hostOf(input.url));
+  const delivery = repo ? state.deliveries[repo] : null;
+  if (delivery && openDelivery(delivery)) writeState(stateDir, withDelivery(state, repo, closeDelivery(delivery, input.result)));
+  return reply(200, { ok: true });
 }
 
 // One request at a time: edits and submits touch the same files and state.
@@ -176,6 +216,7 @@ function handle(key, input, config) {
   if (key === 'GET /pending') return Promise.resolve(pending(config, input));
   if (key === 'POST /fix') return inTurn(() => edit(config, input));
   if (key === 'POST /style') return inTurn(() => restyle(config, input));
+  if (key === 'POST /landed') return inTurn(() => landed(config, input));
   return inTurn(() => submit(config, input));
 }
 

@@ -25,7 +25,7 @@ const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', 
 
 const STYLE = `
   body { margin: 0; background: #FAF7F2; color: #1F1B16; font: 16px/1.7 'Noto Sans TC', system-ui, sans-serif; }
-  main { max-width: 620px; margin: 0 auto; padding: 56px 20px; }
+  main { max-width: 760px; margin: 0 auto; padding: 56px 20px; }
   h1 { font-size: 28px; margin: 0 0 8px; }
   h2 { font-size: 18px; margin: 40px 0 6px; }
   p { margin: 0 0 14px; color: #6B6259; }
@@ -40,6 +40,9 @@ const STYLE = `
   td.last { text-align: right; width: 1%; }
   td.none { color: #A49A8E; }
   form.add { display: flex; flex-wrap: wrap; gap: 8px; }
+  td.after { color: #6B6259; font-size: 14px; }
+  form.add select { flex: 0 0 auto; box-sizing: border-box; padding: 9px 11px; border: 1px solid #E0D7CA; border-radius: 10px; background: #fff; color: inherit; font: inherit; }
+  form.add input.wide { flex-basis: 100%; }
   form.add input { flex: 1 1 180px; min-width: 0; box-sizing: border-box; padding: 9px 11px; border: 1px solid #E0D7CA; border-radius: 10px; background: #fff; color: inherit; font: inherit; }
   form.inline { display: inline; margin: 0; }
   .msg { margin: 0 0 14px; padding: 10px 14px; border-radius: 10px; background: #fff; border: 1px solid #EBE4DA; font-weight: 700; }
@@ -49,10 +52,11 @@ const STYLE = `
 `;
 
 function siteRows(sites, token) {
-  if (!sites.length) return '<tr><td class="none" colspan="3">還沒有設定任何網站。</td></tr>';
-  return sites.map(({ host, name }) => `<tr>
+  if (!sites.length) return '<tr><td class="none" colspan="4">還沒有設定任何網站。</td></tr>';
+  return sites.map(({ host, name, after }) => `<tr>
       <td>${escapeHtml(host)}</td>
       <td>${escapeHtml(name)}</td>
+      <td class="after">${escapeHtml(after)}</td>
       <td class="last"><form class="inline" method="post" action="/setup/sites/remove">
         <input type="hidden" name="token" value="${escapeHtml(token)}"><input type="hidden" name="host" value="${escapeHtml(host)}">
         <button class="plain" type="submit">移除</button></form></td>
@@ -76,7 +80,7 @@ function renderSetupPage({ token, sites, projects, roots, host = '', message = '
   <p>按住 Alt 點網頁上的字，直接改掉原始碼裡的那段字。</p>
 
   <h2>哪個網站改哪個專案</h2>
-  <p>先在這裡設好。設過的網站，Alt + 點就只會動那一個專案；沒設的網站不能改。</p>
+  <p>先在這裡設好。設過的網站，Alt + 點就只會動那一個專案；沒設的網站不能改。<br>最後一欄是按「送出」之後要做什麼，網站才會真的變成新的。要改就用同一個網域再加一次。</p>
   ${note}
   <table>
     ${siteRows(sites, token)}
@@ -86,6 +90,12 @@ function renderSetupPage({ token, sites, projects, roots, host = '', message = '
     <input name="host" placeholder="網域，例如 localhost:3000" value="${escapeHtml(host)}" required>
     <input name="project" list="projects" placeholder="專案資料夾名稱" autocomplete="off" required>
     <datalist id="projects">${projects.map((p) => `<option value="${escapeHtml(p)}">`).join('')}</datalist>
+    <select name="after" aria-label="送出後要做什麼">
+      <option value="push">送出後：push 就會自己部署</option>
+      <option value="cloudpipe">送出後：叫 CloudPipe 部署</option>
+      <option value="command">送出後：跑一個指令</option>
+    </select>
+    <input class="wide" name="afterValue" placeholder="CloudPipe 的專案代號，或要跑的指令（push 就會部署的留空）" autocomplete="off">
     <button type="submit">加入</button>
   </form>
   <p style="margin-top:10px;font-size:14px">專案清單來自 <code>${escapeHtml(roots.join('、'))}</code></p>

@@ -9,7 +9,7 @@ const { isDirectLocalVisit, renderSetupPage, SETUP_HEADERS } = require('./setup-
 
 const MAX_BODY_BYTES = 256 * 1024;
 const USERSCRIPT_PATH = path.join(__dirname, '..', 'fastfix.user.js');
-const FIX_ROUTES = ['POST /fix', 'POST /style', 'POST /submit', 'GET /pending'];
+const FIX_ROUTES = ['POST /fix', 'POST /style', 'POST /submit', 'POST /landed', 'GET /pending'];
 const SETTINGS_ROUTES = ['POST /setup/sites', 'POST /setup/sites/remove'];
 
 class HttpError extends Error {
@@ -75,7 +75,7 @@ async function handleSettings(key, req, res, config) {
   const form = new URLSearchParams(await readBody(req));
   if (!sameSecret(form.get('token') || '', config.token)) throw new HttpError(401, '金鑰不對');
   const result = key === 'POST /setup/sites'
-    ? setSite(config, form.get('host'), form.get('project'))
+    ? setSite(config, form.get('host'), form.get('project'), form.get('after'), form.get('afterValue'))
     : removeSite(config, form.get('host'));
   const back = new URLSearchParams(result.ok
     ? { msg: key === 'POST /setup/sites' ? `已設定 ${result.host}` : `已移除 ${result.host}` }

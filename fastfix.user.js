@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         fastFix
 // @namespace    fastfix
-// @version      0.3.1
-// @description  Alt + 點網頁上的字，直接改掉自己網站原始碼裡的那段字，也能調它的大小、粗細、顏色。改完幾處再一次送出。
+// @version      0.4.0
+// @description  Alt + 點網頁上的字，直接改掉自己網站原始碼裡的那段字，也能調它的大小、粗細、顏色。改完幾處再一次送出，送出後會等到網站真的變成新的才告訴你。
 // @homepageURL  https://github.com/Jeffrey0117/tampermonkey-fastfix
 // @updateURL    https://raw.githubusercontent.com/Jeffrey0117/tampermonkey-fastfix/main/fastfix.user.js
 // @downloadURL  https://raw.githubusercontent.com/Jeffrey0117/tampermonkey-fastfix/main/fastfix.user.js
@@ -30,6 +30,11 @@
   const NEAR_CHARS = 60;
   const SIZES = [12, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72, 96, 128];
   const HINT = 'Enter 改 · Esc 取消';
+  const WATCH_EVERY_MS = 5000;           // how often the site is looked at after a send
+  const GIVE_UP_S = 300;
+  const DEEP_EVERY = 4;                  // every so many looks, the page's scripts are read too
+  const SCRIPT_CAP = 40;
+  const RELOAD_AFTER_MS = 1200;
 
   const endpoint = () => String(GM_getValue('endpoint', DEFAULT_ENDPOINT)).replace(/\/+$/, '');
   const token = () => String(GM_getValue('token', ''));
@@ -95,6 +100,9 @@
     .toast.bad { background: #B4412F; }
     .chip { z-index: 2147483646; left: 18px; bottom: 18px; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px;
             background: #1F1B16; color: #fff; border-radius: 999px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+    .chip { max-width: calc(100vw - 36px); box-sizing: border-box; }
+    .chip span { padding-right: 6px; }
+    .chip button + button { background: #4A433B; }
     .chip button { padding: 6px 14px; border: 0; border-radius: 999px; background: #E09A2E; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
     .chip button:disabled { opacity: .55; cursor: default; }
   `;
@@ -146,7 +154,6 @@
     undoPreview = null;
   }
 
-  // ---- the "N edits not sent yet" chip ----
   function editedHosts() {
     try {
       const hosts = JSON.parse(GM_getValue('hosts', '[]'));
@@ -159,36 +166,139 @@
     if (!hosts.includes(location.host)) GM_setValue('hosts', JSON.stringify([...hosts, location.host]));
   }
 
-  function showChip(count) {
+  function setChip(text, buttons) {
     if (chipEl) { chipEl.remove(); chipEl = null; }
-    if (!count) return;
+    if (!text) return;
     chipEl = make('div', 'chip');
-    chipEl.appendChild(make('span', '', '已改 ' + count + ' 處，還沒送出'));
-    const btn = make('button', '', '送出');
-    btn.type = 'button';
-    btn.addEventListener('click', () => {
-      btn.disabled = true;
-      btn.textContent = '送出中…';
-      call('POST', '/submit', { url: location.href }, WORK_TIMEOUT_MS)
-        .then((data) => {
-          showChip(0);
-          toast('已送出 ' + data.count + ' 處到 ' + data.repoName + '，部署完就是新的', false, LONG_TOAST_MS);
-        })
-        .catch((err) => {
-          btn.disabled = false;
-          btn.textContent = '送出';
-          toast(err.message, true, LONG_TOAST_MS);
-        });
-    });
-    chipEl.appendChild(btn);
+    chipEl.appendChild(make('span', '', text));
+    for (const [label, onClick] of buttons || []) {
+      const btn = make('button', '', label);
+      btn.type = 'button';
+      btn.addEventListener('click', () => onClick(btn));
+      chipEl.appendChild(btn);
+    }
     shadow().appendChild(chipEl);
+  }
+
+  // ---- after a send: is the site really showing the new words yet? ----
+  // The site is read the way the person's browser reads it: the page, and the
+  // scripts it loads when the words are not in the page itself.
+  const squash = (text) => text.replace(/\s+/g, ' ');
+  const sameOrigin = (url) => { try { return new URL(url).origin === location.origin; } catch (_) { return false; } };
+  const absolute = (ref, base) => { try { return new URL(ref, base).href; } catch (_) { return ''; } };
+  const getText = (url, cache) => fetch(url, { cache, credentials: 'same-origin' })
+    .then((res) => (res.ok ? res.text() : ''))
+    .catch(() => '');
+
+  // The same words as a build may have written them: plain, HTML-escaped, or \uXXXX.
+  function spellings(words) {
+    const html = words.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' }[c]));
+    const unicode = words.replace(/[^\x20-\x7e]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+    return [...new Set([words, html, unicode, unicode.replace(/\\u[0-9a-f]{4}/g, (u) => '\\u' + u.slice(2).toUpperCase())])];
+  }
+  const has = (squashed, words) => spellings(squash(words)).some((w) => squashed.includes(w));
+
+  async function scriptTexts(html, pageUrl) {
+    const refs = (text, base, pattern) => Array.from(text.matchAll(pattern), (m) => absolute(m[1], base));
+    const tidy = (urls, skip) => [...new Set(urls)].filter((u) => u && sameOrigin(u) && !skip.includes(u)).slice(0, SCRIPT_CAP);
+    const first = tidy(refs(html, pageUrl, /<(?:script|link)\b[^>]*?\b(?:src|href)=["']([^"']+\.m?js[^"']*)["']/gi), []);
+    const firstTexts = await Promise.all(first.map((u) => getText(u, 'no-cache')));
+    const named = /["'`]((?:\.{0,2}\/)?[\w@.\/-]+\.m?js)["'`]/g;       // chunks a script loads later
+    const second = tidy(firstTexts.flatMap((text, i) => [...refs(text, first[i], named), ...refs(text, location.origin + '/', named)]), first);
+    const secondTexts = await Promise.all(second.map((u) => getText(u, 'no-cache')));
+    return [...firstTexts, ...secondTexts].map(squash);
+  }
+
+  const lastHtml = {};
+  async function pageShows(page, wanted, round) {
+    let url = page;
+    try { const u = new URL(page); url = location.origin + u.pathname + u.search; } catch (_) { /* keep as is */ }
+    const html = await getText(url, 'no-store');
+    const squashed = squash(html);
+    let missing = wanted.filter((w) => !has(squashed, w));
+    if (missing.length && html && (html !== lastHtml[url] || round % DEEP_EVERY === 0)) {
+      const scripts = await scriptTexts(html, url);
+      missing = missing.filter((w) => !scripts.some((text) => has(text, w)));
+    }
+    lastHtml[url] = html;
+    return missing.length === 0;
+  }
+
+  function allLive(checks, round) {
+    const pages = [...new Set(checks.map((c) => c.page))];
+    return Promise.all(pages.map((page) => pageShows(page, checks.filter((c) => c.page === page).map((c) => c.to), round)))
+      .then((results) => results.every(Boolean));
+  }
+
+  // ---- the chip, bottom left: what is not sent yet, and how far the last send got ----
+  let watching = 0;                      // changes whenever the chip is redrawn, so an old wait stops
+  let watchTimer = 0;
+
+  function settle(result) {
+    watching += 1;
+    clearTimeout(watchTimer);
+    setChip('');
+    call('POST', '/landed', { url: location.href, result }).catch(() => { /* asked again on the next page load */ });
+  }
+
+  function land() {
+    call('POST', '/landed', { url: location.href, result: 'live' }).catch(() => { /* asked again on the next page load */ });
+    if (boxEl) { setChip('已上線 ✓', [['重新整理', () => location.reload()]]); return; }
+    setChip('已上線 ✓ 重新整理中…');
+    setTimeout(() => location.reload(), RELOAD_AFTER_MS);
+  }
+
+  function watch(delivery, round, mine) {
+    if (mine !== watching) return;
+    const waited = Math.max(0, Math.round((Date.now() - Date.parse(delivery.at)) / 1000));
+    if (!delivery.checks.length) {
+      setChip('已送出 ✓ 這次只改樣式，沒辦法自動確認，等一下重新整理看看', [['好', () => settle('dismissed')]]);
+      return;
+    }
+    if (waited > GIVE_UP_S) {
+      setChip('已送出，但等了 ' + Math.round(waited / 60) + ' 分鐘網站還是舊的', [
+        ['再看一次', () => showState({ count: 0, delivery: { ...delivery, at: new Date().toISOString() } })],
+        ['不等了', () => settle('dismissed')],
+      ]);
+      return;
+    }
+    setChip('已送出，等網站變成新的… ' + waited + ' 秒');
+    allLive(delivery.checks, round).then((live) => {
+      if (mine !== watching) return;
+      if (live) land();
+      else watchTimer = setTimeout(() => watch(delivery, round + 1, mine), WATCH_EVERY_MS);
+    });
+  }
+
+  function submitNow(btn) {
+    btn.disabled = true;
+    btn.textContent = '送出中…';
+    call('POST', '/submit', { url: location.href }, WORK_TIMEOUT_MS)
+      .then((data) => showState({ count: 0, delivery: data.delivery }))
+      .catch((err) => {
+        btn.disabled = false;
+        btn.textContent = '送出';
+        toast(err.message, true, LONG_TOAST_MS);
+      });
+  }
+
+  function showState({ count, delivery }) {
+    watching += 1;
+    clearTimeout(watchTimer);
+    if (count) { setChip('已改 ' + count + ' 處，還沒送出', [['送出', submitNow]]); return; }
+    if (!delivery) { setChip(''); return; }
+    if (delivery.status === 'failed') {
+      setChip('已送出，但' + delivery.error, [['再叫一次', submitNow], ['關掉', () => settle('dismissed')]]);
+      return;
+    }
+    watch(delivery, 0, watching);
   }
 
   // Only asks on sites where an edit was made before, so other pages stay quiet.
   function refreshChip() {
     if (!token() || window.top !== window || !editedHosts().includes(location.host)) return;
     call('GET', '/pending?host=' + encodeURIComponent(location.host))
-      .then((data) => showChip(data.count || 0))
+      .then((data) => showState({ count: data.count || 0, delivery: data.delivery }))
       .catch(() => { /* service not running: no chip */ });
   }
 
@@ -340,7 +450,7 @@
       closeBox();
       if (to) swapOnPage(range, to);
       rememberHost();
-      showChip(data.pending);
+      showState({ count: data.pending });
       toast('已改 ' + data.repoName + ' / ' + data.file);
     };
 

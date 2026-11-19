@@ -3,19 +3,23 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const FILE_NAME = 'state.json';
-const EMPTY = { sites: {}, pending: {}, sent: {} };
 const SENT_KEPT = 30;
 
-// sites:   host -> repo folder (set on the settings page)
-// pending: repo folder -> { edits: [not committed], unpushed: [committed, not pushed] }
-// sent:    repo folder -> the last edits that were pushed (to recognise a page that still shows the old words)
+// sites:      host -> repo folder (set on the settings page)
+// after:      host -> what to do once the edits are pushed (missing = the push deploys by itself)
+// pending:    repo folder -> { edits: [not committed], unpushed: [committed, not pushed] }
+// sent:       repo folder -> the last edits that were pushed (to recognise a page that still shows the old words)
+// deliveries: repo folder -> the last send and how far it got: waiting -> live | dismissed, or failed
 function readState(stateDir) {
-  try {
-    const data = JSON.parse(fs.readFileSync(path.join(stateDir, FILE_NAME), 'utf8'));
-    return { sites: { ...data.sites }, pending: { ...data.pending }, sent: { ...data.sent } };
-  } catch (_) {
-    return { ...EMPTY };
-  }
+  let data = {};
+  try { data = JSON.parse(fs.readFileSync(path.join(stateDir, FILE_NAME), 'utf8')) || {}; } catch (_) { /* no state yet */ }
+  return {
+    sites: { ...data.sites },
+    after: { ...data.after },
+    pending: { ...data.pending },
+    sent: { ...data.sent },
+    deliveries: { ...data.deliveries },
+  };
 }
 
 function writeState(stateDir, state) {
@@ -40,11 +44,17 @@ const withSent = (state, repo, edits) => ({
   sent: { ...state.sent, [repo]: [...(state.sent[repo] || []), ...edits].slice(-SENT_KEPT) },
 });
 
-const withSite = (state, host, repo) => ({ ...state, sites: { ...state.sites, [host]: repo } });
+const withDelivery = (state, repo, delivery) => ({ ...state, deliveries: { ...state.deliveries, [repo]: delivery } });
+
+function withSite(state, host, repo, after) {
+  const { [host]: _old, ...otherAfter } = state.after;
+  return { ...state, sites: { ...state.sites, [host]: repo }, after: after ? { ...otherAfter, [host]: after } : otherAfter };
+}
 
 function withoutSite(state, host) {
   const { [host]: _removed, ...sites } = state.sites;
-  return { ...state, sites };
+  const { [host]: _alsoRemoved, ...after } = state.after;
+  return { ...state, sites, after };
 }
 
-module.exports = { readState, writeState, repoPending, withPending, withSent, withSite, withoutSite };
+module.exports = { readState, writeState, repoPending, withPending, withSent, withDelivery, withSite, withoutSite };
