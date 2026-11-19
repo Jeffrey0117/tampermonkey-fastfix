@@ -93,7 +93,7 @@ function renderSetupPage({ token, sites, projects, roots, host = '', message = '
   <h2>安裝腳本</h2>
   <ol>
     <li><a class="btn" href="/fastfix.user.js">安裝腳本</a><br>Tampermonkey 會跳出安裝畫面，按「安裝」。</li>
-    <li>回到這一頁按 <code>F5</code> 重新整理。下面那一格變成「已連上」就完成了。</li>
+    <li>回到這一頁按 <code>F5</code> 重新整理。下面那一格變成「肏你媽」就完成了。</li>
   </ol>
   <div id="fastfix-status" data-state="waiting">還沒連上：腳本裝好後重新整理這一頁。</div>
 </main>
