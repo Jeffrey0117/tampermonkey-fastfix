@@ -5,7 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const fix = require('./fix');
 const { listSettings, setSite, removeSite } = require('./fix/settings');
-const { isDirectLocalVisit, renderSetupPage, SETUP_HEADERS } = require('./setup-page');
+const { isDirectLocalVisit, isSetupPageVisit, renderSetupPage, SETUP_HEADERS } = require('./setup-page');
 
 const MAX_BODY_BYTES = 256 * 1024;
 const USERSCRIPT_PATH = path.join(__dirname, '..', 'fastfix.user.js');
@@ -91,7 +91,7 @@ async function route(req, res, config) {
   if (key === 'GET /health') return sendJson(res, 200, { ok: true });
 
   if (key === 'GET /setup') {
-    if (!isDirectLocalVisit(req)) throw new HttpError(403, '設定頁只能在這台電腦上直接開');
+    if (!isSetupPageVisit(req)) throw new HttpError(403, '設定頁只能在這台電腦上直接開');
     res.writeHead(200, SETUP_HEADERS);
     return res.end(renderSetupPage({
       token: config.token,

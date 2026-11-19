@@ -17,8 +17,16 @@ function isDirectLocalVisit(req) {
   if (!isLoopbackHost(req.headers.host)) return false;
   if (PROXY_HEADERS.some((h) => req.headers[h] !== undefined)) return false;
   const site = req.headers['sec-fetch-site'];
-  if (site !== undefined && site !== 'none' && site !== 'same-origin') return false;
-  return true;
+  return site === undefined || site === 'none' || site === 'same-origin';
+}
+
+// Opening the setup page in its own tab is fine however the person got there
+// (a link in another page, a bookmark bar, a reload of either): the other page
+// cannot read what the tab shows, and the page refuses to be framed.
+function isSetupPageVisit(req) {
+  if (isDirectLocalVisit(req)) return true;
+  const arrivedByLink = req.method === 'GET' && req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
+  return arrivedByLink && isDirectLocalVisit({ socket: req.socket, headers: { ...req.headers, 'sec-fetch-site': 'none' } });
 }
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -121,4 +129,4 @@ const SETUP_HEADERS = {
   'cross-origin-resource-policy': 'same-origin',
 };
 
-module.exports = { isDirectLocalVisit, renderSetupPage, SETUP_HEADERS };
+module.exports = { isDirectLocalVisit, isSetupPageVisit, renderSetupPage, SETUP_HEADERS };
