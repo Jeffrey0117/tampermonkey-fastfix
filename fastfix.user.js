@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         fastFix
 // @namespace    fastfix
-// @version      0.4.0
+// @version      0.4.1
 // @description  Alt + 點網頁上的字，直接改掉自己網站原始碼裡的那段字，也能調它的大小、粗細、顏色。改完幾處再一次送出，送出後會等到網站真的變成新的才告訴你。
 // @homepageURL  https://github.com/Jeffrey0117/tampermonkey-fastfix
 // @updateURL    https://raw.githubusercontent.com/Jeffrey0117/tampermonkey-fastfix/main/fastfix.user.js
@@ -29,7 +29,7 @@
   const BOX_MAX = 520;
   const NEAR_CHARS = 60;
   const SIZES = [12, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72, 96, 128];
-  const HINT = 'Enter 改 · Esc 取消';
+  const HINT = 'Enter 先改、晚點一起送 · Esc 取消';
   const WATCH_EVERY_MS = 5000;           // how often the site is looked at after a send
   const GIVE_UP_S = 300;
   const DEEP_EVERY = 4;                  // every so many looks, the page's scripts are read too
@@ -87,6 +87,9 @@
                          color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
     .box .tools button:hover { background: #FCF1DD; }
     .box .tools .gap { width: 8px; }
+    .box .tools .push { flex: 1; }
+    .box .tools button.go { padding: 0 16px; border-color: #E09A2E; background: #E09A2E; color: #fff; font-weight: 700; }
+    .box .tools button.go:hover { background: #C98622; }
     .box .tools input { width: 34px; height: 30px; padding: 2px; border: 1px solid #E0D7CA; border-radius: 8px; background: #fff; cursor: pointer; }
     .box .hint { margin-top: 6px; font-size: 11px; color: #A49A8E; }
     .box .note { margin-top: 8px; font-size: 13px; color: #B4412F; }
@@ -270,15 +273,15 @@
     });
   }
 
-  function submitNow(btn) {
-    btn.disabled = true;
-    btn.textContent = '送出中…';
+  function submitNow() {
+    watching += 1;
+    clearTimeout(watchTimer);
+    setChip('送出中…');
     call('POST', '/submit', { url: location.href }, WORK_TIMEOUT_MS)
       .then((data) => showState({ count: 0, delivery: data.delivery }))
       .catch((err) => {
-        btn.disabled = false;
-        btn.textContent = '送出';
         toast(err.message, true, LONG_TOAST_MS);
+        refreshChip();
       });
   }
 
@@ -406,6 +409,7 @@
     let look = {};
     let lookSaved = false;
     let keepPreview = false;
+    let sendAfter = false;               // the 送出 button: change it and send right away
     undoPreview = () => { if (!keepPreview) Object.assign(el.style, original); };
 
     const preview = (change) => {
@@ -444,6 +448,9 @@
     colour.value = rgbToHex(shown.color);
     colour.addEventListener('input', () => preview({ color: colour.value }));
     tools.appendChild(colour);
+    tools.appendChild(make('span', 'push'));
+    tool('送出', '改完直接送出', () => { sendAfter = true; send(); });
+    tools.lastChild.className = 'go';
 
     const finish = (data, to) => {
       keepPreview = true;
@@ -451,7 +458,8 @@
       if (to) swapOnPage(range, to);
       rememberHost();
       showState({ count: data.pending });
-      toast('已改 ' + data.repoName + ' / ' + data.file);
+      if (sendAfter) submitNow();
+      else toast('已改 ' + data.repoName + ' / ' + data.file);
     };
 
     // Any answer other than "done": say why, or ask which place.
@@ -490,7 +498,7 @@
       const typed = input.value.trim();
       const to = typed && typed !== text ? typed : '';
       const lookChanged = Object.keys(look).length > 0 && !lookSaved;
-      if (!to && !lookChanged) { say('還沒改任何東西'); return; }
+      if (!to && !lookChanged) { sendAfter = false; say('還沒改任何東西'); return; }
       const where = { text, url: location.href, pick, ...near };
       const steps = [
         lookChanged && (() => call('POST', '/style', { ...where, look }, WORK_TIMEOUT_MS).then((data) => {

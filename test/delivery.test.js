@@ -194,3 +194,11 @@ test('the bare address leads to the setup page', async () => {
     assert.deepEqual([res.status, res.headers.get('location')], [302, '/setup']);
   } finally { await s.close(); }
 });
+
+test('setup page: lets the userscript re-read it, so an edit to this very page can be seen landing', async () => {
+  const s = await boot();
+  try {
+    const res = await fetch(s.url + '/setup');
+    assert.match(res.headers.get('content-security-policy'), /connect-src 'self'/);
+  } finally { await s.close(); }
+});
