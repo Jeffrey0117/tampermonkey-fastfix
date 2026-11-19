@@ -177,7 +177,10 @@ test('settings: what happens after a send is saved with the site and shown on th
 test('setup page: opens when reached by a link from another page, but its content is not handed to other pages', async () => {
   const s = await boot();
   try {
-    const get = (headers) => fetch(`${s.url}/setup`, { headers }).then((r) => r.status);
+    // fetch() writes its own sec-fetch-mode, so this speaks http directly
+    const get = (headers) => new Promise((resolve, reject) => {
+      http.get(`${s.url}/setup`, { headers }, (res) => { res.resume(); resolve(res.statusCode); }).on('error', reject);
+    });
     assert.equal(await get({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' }), 200, 'a clicked link or a reload of one');
     assert.equal(await get({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' }), 403, 'a script on another page');
     assert.equal(await get({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' }), 403, 'framed by another page');
