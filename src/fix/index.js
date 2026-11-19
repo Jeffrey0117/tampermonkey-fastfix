@@ -45,6 +45,13 @@ function alreadyChanged(state, repo, text) {
   return [...history].reverse().find((e) => !isLookEdit(e) && (text.includes(e.from) || e.from.includes(text))) || null;
 }
 
+// What the clicked words are in the source now, following the edits made to them one after another.
+function becameWhat(state, repo, text) {
+  const pending = repoPending(state, repo);
+  const history = [...(state.sent[repo] || []), ...pending.unpushed, ...pending.edits];
+  return history.reduce((now, e) => (!isLookEdit(e) && e.from === now ? e.to : now), text);
+}
+
 const publicMatch = ({ file, nth, line, context }) => ({ file, nth, line, context });
 
 // Same words in several places: the one whose surroundings look most like the
@@ -73,18 +80,23 @@ async function locate({ stateDir }, input) {
   if (!repo) return { reply: reply(200, { ok: true, status: 'unset', host }) };
   const repoName = path.basename(repo);
 
-  const matches = await matchesInRepo(repo, from);
+  // The page only shows new words once they are live. Until then a click on the
+  // old words means the words an earlier edit turned them into.
+  let matches = await matchesInRepo(repo, from);
+  let current = from;
   if (!matches.length) {
     const earlier = alreadyChanged(state, repo, from);
-    if (earlier) return { reply: reply(200, { ok: true, status: 'stale', repoName, from: earlier.from, to: earlier.to }) };
-    return { reply: reply(200, { ok: true, status: 'notfound', repoName }) };
+    current = becameWhat(state, repo, from);
+    if (current !== from) matches = await matchesInRepo(repo, current);
+    if (!matches.length && earlier) return { reply: reply(200, { ok: true, status: 'stale', repoName, from: earlier.from, to: earlier.to }) };
+    if (!matches.length) return { reply: reply(200, { ok: true, status: 'notfound', repoName }) };
   }
 
   const pick = input.pick && typeof input.pick === 'object' ? input.pick : null;
   const hints = { before: typeof input.before === 'string' ? input.before : '', after: typeof input.after === 'string' ? input.after : '' };
   const match = pick ? matches.find((m) => m.file === pick.file && m.nth === pick.nth) : clearWinner(matches, repo, hints);
   if (pick && !match) return { reply: refuse(409, '那個位置已經變了，再試一次') };
-  if (match) return { found: { state, repo, repoName, match, from } };
+  if (match) return { found: { state, repo, repoName, match, from: current } };
   if (matches.length > MAX_CHOICES) return { reply: reply(200, { ok: true, status: 'toomany', count: matches.length }) };
   return { reply: reply(200, { ok: true, status: 'choose', repoName, matches: matches.map(publicMatch) }) };
 }
@@ -118,8 +130,9 @@ async function edit(config, input) {
 
   const where = await locate(config, input);
   if (where.reply) return where.reply;
-  const { match } = where.found;
-  return applyChange(config, where.found, (content) => ({ content: replaceAt(content, match.index, match.length, to) }), { from, to, page: pageOf(input.url) });
+  const { match, from: current } = where.found;
+  if (current === to) return refuse(400, '沒有改任何字');
+  return applyChange(config, where.found, (content) => ({ content: replaceAt(content, match.index, match.length, to) }), { from: current, to, page: pageOf(input.url) });
 }
 
 async function restyle(config, input) {

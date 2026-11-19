@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         fastFix
 // @namespace    fastfix
-// @version      0.4.2
+// @version      0.5.0
 // @description  Alt + 點網頁上的字，直接改掉自己網站原始碼裡的那段字，也能調它的大小、粗細、顏色。改完幾處再一次送出，送出後會等到網站真的變成新的才告訴你。
 // @homepageURL  https://github.com/Jeffrey0117/tampermonkey-fastfix
 // @updateURL    https://raw.githubusercontent.com/Jeffrey0117/tampermonkey-fastfix/main/fastfix.user.js
@@ -106,6 +106,10 @@
             background: #1F1B16; color: #fff; border-radius: 999px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
     .chip { max-width: calc(100vw - 36px); box-sizing: border-box; }
     .chip span { padding-right: 6px; }
+    .chip.busy { padding-bottom: 13px; overflow: hidden; }
+    .chip .bar { position: absolute; left: 14px; right: 14px; bottom: 6px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden; }
+    .chip .bar::after { content: ''; position: absolute; top: 0; bottom: 0; width: 38%; border-radius: 3px; background: #E09A2E; animation: slide 1.3s ease-in-out infinite; }
+    @keyframes slide { from { left: -40%; } to { left: 100%; } }
     .chip button + button { background: #4A433B; }
     .chip button { padding: 6px 14px; border: 0; border-radius: 999px; background: #E09A2E; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
     .chip button:disabled { opacity: .55; cursor: default; }
@@ -170,10 +174,11 @@
     if (!hosts.includes(location.host)) GM_setValue('hosts', JSON.stringify([...hosts, location.host]));
   }
 
-  function setChip(text, buttons) {
+  function setChip(text, buttons, busy) {
     if (chipEl) { chipEl.remove(); chipEl = null; }
     if (!text) return;
-    chipEl = make('div', 'chip');
+    chipEl = make('div', busy ? 'chip busy' : 'chip');
+    if (busy) chipEl.appendChild(make('i', 'bar'));
     chipEl.appendChild(make('span', '', text));
     for (const [label, onClick] of buttons || []) {
       const btn = make('button', '', label);
@@ -266,7 +271,7 @@
       ]);
       return;
     }
-    setChip('已送出，等網站變成新的… ' + waited + ' 秒');
+    if (round === 0) setChip('已送出，等網站更新', [], true);
     allLive(delivery.checks, round).then((live) => {
       if (mine !== watching) return;
       if (live) land();
@@ -277,7 +282,7 @@
   function submitNow() {
     watching += 1;
     clearTimeout(watchTimer);
-    setChip('送出中…');
+    setChip('送出中', [], true);
     call('POST', '/submit', { url: location.href }, WORK_TIMEOUT_MS)
       .then((data) => showState({ count: 0, delivery: data.delivery }))
       .catch((err) => {
@@ -346,17 +351,14 @@
     return { text: node.textContent.trim(), range };
   }
 
-  // Show the new words right away; the real page catches up after the deploy.
-  function swapOnPage(range, to) {
+  // The page keeps showing what the site really serves. A changed piece only gets
+  // a dashed outline, so the new words appearing is proof that it went live.
+  function markChanged(el, to) {
     try {
-      const node = range.startContainer;
-      if (node !== range.endContainer || node.nodeType !== Node.TEXT_NODE) return;
-      const full = node.textContent;
-      const picked = full.slice(range.startOffset, range.endOffset);
-      const lead = picked.length - picked.trimStart().length;
-      const trail = picked.length - picked.trimEnd().length;
-      node.textContent = full.slice(0, range.startOffset + lead) + to + full.slice(range.endOffset - trail);
-    } catch (_) { /* the page changed under us; the deploy will show it */ }
+      el.style.outline = '2px dashed #E09A2E';
+      el.style.outlineOffset = '3px';
+      el.title = to ? '已改成「' + to + '」，上線後才會變' : '樣式已改，上線後才會變';
+    } catch (_) { /* the page changed under us */ }
   }
 
   const lookWords = (look) => [
@@ -409,9 +411,8 @@
     const original = { fontSize: el.style.fontSize, fontWeight: el.style.fontWeight, color: el.style.color };
     let look = {};
     let lookSaved = false;
-    let keepPreview = false;
     let sendAfter = false;               // the 送出 button: change it and send right away
-    undoPreview = () => { if (!keepPreview) Object.assign(el.style, original); };
+    undoPreview = () => Object.assign(el.style, original);
 
     const preview = (change) => {
       look = { ...look, ...change };
@@ -454,9 +455,8 @@
     tools.lastChild.className = 'go';
 
     const finish = (data, to) => {
-      keepPreview = true;
       closeBox();
-      if (to) swapOnPage(range, to);
+      markChanged(el, to);
       rememberHost();
       showState({ count: data.pending });
       if (sendAfter) submitNow();
