@@ -171,3 +171,29 @@ test('a project that cannot be brought up to date says so instead of editing an 
     assert.equal(s.source(), before);
   } finally { await s.close(); }
 });
+
+// A site written the pagetext-kit way: the page holds no words, its text file does.
+test('a page that keeps its words in a text file: the words and the look are both changed in the right file', async () => {
+  const s = await boot();
+  try {
+    const dir = path.join(s.shop, 'app', 'pricing');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'page.text.ts'), "export const text = {\n  hero: { title: '一個價錢，全部功能', lead: '先用，喜歡再付' },\n  plans: [{ name: '免費' }, { name: '專業' }],\n} as const;\n", 'utf8');
+    fs.writeFileSync(path.join(dir, 'page.tsx'), "import { text as t } from './page.text';\n\nexport default function Page() {\n  return (\n    <section className=\"py-20\">\n      <h2 className=\"text-3xl font-semibold\">{t.hero.title}</h2>\n      <p className=\"text-lg text-stone-600\">{t.hero.lead}</p>\n    </section>\n  );\n}\n", 'utf8');
+    git(s.shop, 'add', '-A');
+    git(s.shop, 'commit', '-q', '-m', 'pricing page');
+    git(s.shop, 'push', '-q');
+    const read = (name) => fs.readFileSync(path.join(dir, name), 'utf8');
+    const url = `${PAGE}pricing`;
+
+    const fixed = await s.call('POST', '/fix', { text: '一個價錢，全部功能', to: '一個價錢，什麼都有', url });
+    assert.equal(fixed.json.status, 'done');
+    assert.match(read('page.text.ts'), /title: '一個價錢，什麼都有'/);
+
+    const mark = { tag: 'h2', classes: ['text-3xl', 'font-semibold'], chain: [{ tag: 'section', classes: ['py-20'] }], width: 1280 };
+    const styled = await s.call('POST', '/style', { text: '一個價錢，什麼都有', url, mark, look: { fontSize: '36px' } });
+    assert.equal(styled.json.status, 'done');
+    assert.match(read('page.tsx'), /<h2 className="text-4xl font-semibold">\{t\.hero\.title\}<\/h2>/);
+    assert.match(read('page.text.ts'), /title: '一個價錢，什麼都有'/, 'the look change left the words alone');
+  } finally { await s.close(); }
+});
