@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         fastFix
 // @namespace    fastfix
-// @version      0.5.0
+// @version      0.5.1
 // @description  Alt + 點網頁上的字，直接改掉自己網站原始碼裡的那段字，也能調它的大小、粗細、顏色。改完幾處再一次送出，送出後會等到網站真的變成新的才告訴你。
 // @homepageURL  https://github.com/Jeffrey0117/tampermonkey-fastfix
 // @updateURL    https://raw.githubusercontent.com/Jeffrey0117/tampermonkey-fastfix/main/fastfix.user.js
@@ -29,7 +29,7 @@
   const BOX_MAX = 520;
   const NEAR_CHARS = 60;
   const SIZES = [12, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72, 96, 128];
-  const HINT = 'Enter 先改、晚點一起送 · Esc 取消';
+  const HINT = 'Enter 送出 · Esc 取消';
   const WATCH_EVERY_MS = 5000;           // how often the site is looked at after a send
   const GIVE_UP_S = 300;
   const DEEP_EVERY = 4;                  // every so many looks, the page's scripts are read too
@@ -252,9 +252,10 @@
 
   function land() {
     call('POST', '/landed', { url: location.href, result: 'live' }).catch(() => { /* asked again on the next page load */ });
-    if (boxEl) { setChip('已上線 ✓', [['重新整理', () => location.reload()]]); return; }
     setChip('已上線 ✓ 重新整理中…');
-    setTimeout(() => location.reload(), RELOAD_AFTER_MS);
+    // always reloads by itself; only holds off while something is being typed in the box
+    const reload = () => (boxEl ? setTimeout(reload, 500) : location.reload());
+    setTimeout(reload, RELOAD_AFTER_MS);
   }
 
   function watch(delivery, round, mine) {
@@ -411,7 +412,6 @@
     const original = { fontSize: el.style.fontSize, fontWeight: el.style.fontWeight, color: el.style.color };
     let look = {};
     let lookSaved = false;
-    let sendAfter = false;               // the 送出 button: change it and send right away
     undoPreview = () => Object.assign(el.style, original);
 
     const preview = (change) => {
@@ -451,7 +451,7 @@
     colour.addEventListener('input', () => preview({ color: colour.value }));
     tools.appendChild(colour);
     tools.appendChild(make('span', 'push'));
-    tool('送出', '改完直接送出', () => { sendAfter = true; send(); });
+    tool('送出', '改完直接送出', () => send());
     tools.lastChild.className = 'go';
 
     const finish = (data, to) => {
@@ -459,8 +459,7 @@
       markChanged(el, to);
       rememberHost();
       showState({ count: data.pending });
-      if (sendAfter) submitNow();
-      else toast('已改 ' + data.repoName + ' / ' + data.file);
+      submitNow();                                             // one step: changing it is sending it
     };
 
     // Any answer other than "done": say why, or ask which place.
@@ -499,7 +498,7 @@
       const typed = input.value.trim();
       const to = typed && typed !== text ? typed : '';
       const lookChanged = Object.keys(look).length > 0 && !lookSaved;
-      if (!to && !lookChanged) { sendAfter = false; say('還沒改任何東西'); return; }
+      if (!to && !lookChanged) { say('還沒改任何東西'); return; }
       const where = { text, url: location.href, pick, ...near };
       const steps = [
         lookChanged && (() => call('POST', '/style', { ...where, look }, WORK_TIMEOUT_MS).then((data) => {
