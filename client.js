@@ -15,11 +15,11 @@
   const NEAR_CHARS = 60;
   const SIZES = [12, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72, 96, 128];
   const HINT = 'Enter 送出 · Esc 取消';
-  const WATCH_EVERY_MS = 5000;           // how often the site is looked at after a send
+  const WATCH_EVERY_MS = 2000;           // how often the site is looked at after a send
   const GIVE_UP_S = 300;
-  const DEEP_EVERY = 4;                  // every so many looks, the page's scripts are read too
+  const DEEP_EVERY = 10;                 // every so many looks, the page's scripts are read too
   const SCRIPT_CAP = 40;
-  const RELOAD_AFTER_MS = 1200;
+  const RELOAD_AFTER_MS = 600;
 
   const endpoint = () => String(GM_getValue('endpoint', DEFAULT_ENDPOINT)).replace(/\/+$/, '');
   const token = () => String(GM_getValue('token', ''));
