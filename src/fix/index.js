@@ -6,6 +6,7 @@ const { matchesInRepo } = require('./search');
 const { newRiskyChars, replaceAt, contextScore } = require('./match');
 const { parseLook, describeLook, applyLook, usesTailwind } = require('./style');
 const { parseMark, restyleByElement } = require('./element');
+const { withBreaks, linesOf } = require('./breaks');
 const { runAfter } = require('./after-send');
 const { LOOK_MARK, isLookEdit, nextDelivery, openDelivery, closeDelivery } = require('./delivery');
 const { readState, writeState, repoPending, withPending, withSent, withDelivery } = require('./store');
@@ -139,18 +140,22 @@ async function applyChange({ stateDir }, { state, repo, repoName, match }, chang
 
 async function edit(config, input) {
   const from = typeof input.text === 'string' ? input.text.trim() : '';
-  const to = typeof input.to === 'string' ? input.to.trim() : '';
+  // a line break (Shift+Enter in the box) is kept; how it is written depends on the file (see breaks.js)
+  const to = typeof input.to === 'string' ? linesOf(input.to.replace(/\r\n?/g, '\n')).join('\n') : '';
   if (!to) return refuse(400, '沒有內容');
   if (to.length > MAX_TEXT) return refuse(400, '這段字太長');
   if (from === to) return refuse(400, '沒有改任何字');
-  const risky = newRiskyChars(from, to);
+  const risky = newRiskyChars(from, to).filter((c) => c !== '\n');
   if (risky.length) return refuse(422, `新的字裡有可能弄壞程式的符號：${risky.map((c) => JSON.stringify(c)).join(' ')}`);
 
   const where = await locate(config, input);
   if (where.reply) return where.reply;
   const { match, from: current } = where.found;
   if (current === to) return refuse(400, '沒有改任何字');
-  return applyChange(config, where.found, (content) => ({ content: replaceAt(content, match.index, match.length, to) }), { from: current, to, page: pageOf(input.url), path: spotOf(input.path) });
+  return applyChange(config, where.found, (content) => {
+    const written = withBreaks(where.found.repo, match.file, content, match, to);
+    return written.reason ? written : { content: replaceAt(content, match.index, match.length, written.text) };
+  }, { from: current, to, page: pageOf(input.url), path: spotOf(input.path) });
 }
 
 const lineAt = (repo, match) => fs.readFileSync(path.join(repo, match.file), 'utf8').slice(0, match.index).split('\n').length;

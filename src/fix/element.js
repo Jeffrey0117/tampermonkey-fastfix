@@ -232,4 +232,4 @@ function restyleByElement(repo, mark, look, hint) {
   return result.reason ? result : { file: found.file, ...result };
 }
 
-module.exports = { parseMark, restyleByElement };
+module.exports = { parseMark, restyleByElement, loadParser };

@@ -14,7 +14,7 @@
   const BOX_MAX = 520;
   const NEAR_CHARS = 60;
   const SIZES = [12, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72, 96, 128];
-  const HINT = 'Enter 送出 · Esc 取消';
+  const HINT = 'Enter 送出 · Shift+Enter 換行 · Esc 取消';
   const WATCH_EVERY_MS = 2000;           // how often the site is looked at after a send
   const GIVE_UP_S = 300;
   const DEEP_EVERY = 10;                 // every so many looks, the page's scripts are read too
@@ -214,6 +214,11 @@
     const probe = document.createElement('span');
     return Object.keys(look).every((k) => { probe.style[k] = look[k]; return el.style[k] && el.style[k] === probe.style[k]; });
   }
+  // Words with a line break in them end up in separate paragraphs: each line is looked for by
+  // itself, and the old words must be gone (a break added to them leaves every line where it was).
+  const linesOf = (check) => check.to.split('\n').map((l) => squash(l).trim()).filter(Boolean);
+  const manyLines = (check) => check.to.includes('\n');
+  const shownIn = (text, check) => linesOf(check).every((l) => has(text, l));
   function spotSays(doc, check) {
     const el = spotIn(doc, check.path);
     if (!el) return 'unknown';
@@ -224,7 +229,9 @@
       return sameLook(el, check.look) ? 'yes' : 'no';
     }
     if (text.includes(squash(check.to))) return 'yes';
-    return check.from && text.includes(squash(check.from)) ? 'no' : 'unknown';
+    const old = Boolean(check.from) && text.includes(squash(check.from));
+    if (manyLines(check) && !old && linesOf(check).every((l) => text.includes(l))) return 'yes';
+    return old ? 'no' : 'unknown';
   }
 
   async function pageShows(page, checks, round) {
@@ -235,12 +242,13 @@
     try { doc = html ? new DOMParser().parseFromString(html, 'text/html') : null; } catch (_) { /* judged by the words alone */ }
     const said = checks.map((c) => spotSays(doc, c));
     // words whose spot could not be found: anywhere in the page or its scripts will do
-    const loose = checks.filter((c, i) => said[i] === 'unknown' && !c.look).map((c) => c.to);
+    const loose = checks.filter((c, i) => said[i] === 'unknown' && !c.look);
     const squashed = squash(html);
-    let missing = loose.filter((w) => !has(squashed, w));
+    const stillOld = (c) => manyLines(c) && Boolean(c.from) && has(squashed, c.from);
+    let missing = loose.filter((c) => stillOld(c) || !shownIn(squashed, c));
     if (missing.length && html && (html !== lastHtml[url] || round % DEEP_EVERY === 0)) {
       const scripts = await scriptTexts(html, url);
-      missing = missing.filter((w) => !scripts.some((text) => has(text, w)));
+      missing = missing.filter((c) => stillOld(c) || !scripts.some((text) => shownIn(text, c)));
     }
     lastHtml[url] = html;
     const looksUnknown = checks.filter((c, i) => said[i] === 'unknown' && c.look).length;
