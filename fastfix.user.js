@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         fastFix
 // @namespace    fastfix
-// @version      0.4.1
+// @version      0.4.2
 // @description  Alt + 點網頁上的字，直接改掉自己網站原始碼裡的那段字，也能調它的大小、粗細、顏色。改完幾處再一次送出，送出後會等到網站真的變成新的才告訴你。
 // @homepageURL  https://github.com/Jeffrey0117/tampermonkey-fastfix
 // @updateURL    https://raw.githubusercontent.com/Jeffrey0117/tampermonkey-fastfix/main/fastfix.user.js
@@ -25,7 +25,7 @@
   const WORK_TIMEOUT_MS = 100000;        // a push can be slow
   const TOAST_MS = 2600;
   const LONG_TOAST_MS = 9000;
-  const BOX_MIN = 260;
+  const BOX_MIN = 320;
   const BOX_MAX = 520;
   const NEAR_CHARS = 60;
   const SIZES = [12, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72, 96, 128];
@@ -88,6 +88,7 @@
     .box .tools button:hover { background: #FCF1DD; }
     .box .tools .gap { width: 8px; }
     .box .tools .push { flex: 1; }
+    .box .tools button, .box .tools input { flex: 0 0 auto; white-space: nowrap; }
     .box .tools button.go { padding: 0 16px; border-color: #E09A2E; background: #E09A2E; color: #fff; font-weight: 700; }
     .box .tools button.go:hover { background: #C98622; }
     .box .tools input { width: 34px; height: 30px; padding: 2px; border: 1px solid #E0D7CA; border-radius: 8px; background: #fff; cursor: pointer; }
