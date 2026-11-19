@@ -4,6 +4,7 @@ const path = require('node:path');
 const { isDirty, commitFiles, push } = require('./git');
 const { matchesInRepo } = require('./search');
 const { newRiskyChars, replaceAt, contextScore } = require('./match');
+const { parseLook, describeLook, applyLook } = require('./style');
 const { readState, writeState, repoPending, withPending } = require('./store');
 
 const MAX_CHOICES = 12;
@@ -42,49 +43,74 @@ function clearWinner(matches, repo, hints) {
   return scored[0].score > scored[1].score ? scored[0].m : null;
 }
 
-async function applyEdit({ stateDir, state, repo, match, from, to }) {
-  const { file } = match;
-  const pending = repoPending(state, repo);
-  const ours = [...pending.edits, ...pending.unpushed].some((e) => e.file === file);
-  if (!ours && await isDirty(repo, file)) {
-    return refuse(409, `${file} 有還沒 commit 的修改，先處理完再改`);
-  }
-  const full = path.join(repo, file);
-  const content = fs.readFileSync(full, 'utf8');
-  fs.writeFileSync(full, replaceAt(content, match.index, match.length, to), 'utf8');
-  const edit = { file, from, to, at: new Date().toISOString() };
-  const next = withPending(state, repo, { ...pending, edits: [...pending.edits, edit] });
-  writeState(stateDir, next);
-  return reply(200, { ok: true, status: 'done', repoName: path.basename(repo), file, line: match.line, pending: pendingCount(next, repo) });
-}
-
-async function edit({ stateDir }, input) {
+// Finds the one place in the site's project where the clicked words live.
+// Gives back either { found } or the { reply } that ends the request.
+async function locate({ stateDir }, input) {
   const from = typeof input.text === 'string' ? input.text.trim() : '';
-  const to = typeof input.to === 'string' ? input.to.trim() : '';
   const host = hostOf(input.url);
-  if (!from || !to) return refuse(400, '沒有內容');
-  if (from.length > MAX_TEXT || to.length > MAX_TEXT) return refuse(400, '這段字太長');
-  if (from === to) return refuse(400, '沒有改任何字');
-  if (!host) return refuse(400, '不知道是哪個網站');
-  const risky = newRiskyChars(from, to);
-  if (risky.length) return refuse(422, `新的字裡有可能弄壞程式的符號：${risky.map((c) => JSON.stringify(c)).join(' ')}`);
+  if (!from) return { reply: refuse(400, '沒有內容') };
+  if (from.length > MAX_TEXT) return { reply: refuse(400, '這段字太長') };
+  if (!host) return { reply: refuse(400, '不知道是哪個網站') };
 
   const state = readState(stateDir);
   const repo = projectFor(state, host);
-  if (!repo) return reply(200, { ok: true, status: 'unset', host });
+  if (!repo) return { reply: reply(200, { ok: true, status: 'unset', host }) };
+  const repoName = path.basename(repo);
 
   const matches = await matchesInRepo(repo, from);
-  if (!matches.length) return reply(200, { ok: true, status: 'notfound', repoName: path.basename(repo) });
+  if (!matches.length) return { reply: reply(200, { ok: true, status: 'notfound', repoName }) };
 
   const pick = input.pick && typeof input.pick === 'object' ? input.pick : null;
   const hints = { before: typeof input.before === 'string' ? input.before : '', after: typeof input.after === 'string' ? input.after : '' };
-  const chosen = pick
-    ? matches.find((m) => m.file === pick.file && m.nth === pick.nth)
-    : clearWinner(matches, repo, hints);
-  if (pick && !chosen) return refuse(409, '那個位置已經變了，再試一次');
-  if (chosen) return applyEdit({ stateDir, state, repo, match: chosen, from, to });
-  if (matches.length > MAX_CHOICES) return reply(200, { ok: true, status: 'toomany', count: matches.length });
-  return reply(200, { ok: true, status: 'choose', repoName: path.basename(repo), matches: matches.map(publicMatch) });
+  const match = pick ? matches.find((m) => m.file === pick.file && m.nth === pick.nth) : clearWinner(matches, repo, hints);
+  if (pick && !match) return { reply: refuse(409, '那個位置已經變了，再試一次') };
+  if (match) return { found: { state, repo, repoName, match, from } };
+  if (matches.length > MAX_CHOICES) return { reply: reply(200, { ok: true, status: 'toomany', count: matches.length }) };
+  return { reply: reply(200, { ok: true, status: 'choose', repoName, matches: matches.map(publicMatch) }) };
+}
+
+// Writes one change to the file and counts it as pending. `change(content)`
+// returns the new content, or { reason } when it cannot be done.
+async function applyChange({ stateDir }, { state, repo, repoName, match }, change, record) {
+  const { file } = match;
+  const pending = repoPending(state, repo);
+  const ours = [...pending.edits, ...pending.unpushed].some((e) => e.file === file);
+  if (!ours && await isDirty(repo, file)) return refuse(409, `${file} 有還沒 commit 的修改，先處理完再改`);
+
+  const full = path.join(repo, file);
+  const result = change(fs.readFileSync(full, 'utf8'));
+  if (result.reason) return reply(200, { ok: true, status: 'cant', reason: result.reason });
+  fs.writeFileSync(full, result.content, 'utf8');
+
+  const next = withPending(state, repo, { ...pending, edits: [...pending.edits, { file, ...record, at: new Date().toISOString() }] });
+  writeState(stateDir, next);
+  return reply(200, { ok: true, status: 'done', repoName, file, line: match.line, pending: pendingCount(next, repo) });
+}
+
+async function edit(config, input) {
+  const from = typeof input.text === 'string' ? input.text.trim() : '';
+  const to = typeof input.to === 'string' ? input.to.trim() : '';
+  if (!to) return refuse(400, '沒有內容');
+  if (to.length > MAX_TEXT) return refuse(400, '這段字太長');
+  if (from === to) return refuse(400, '沒有改任何字');
+  const risky = newRiskyChars(from, to);
+  if (risky.length) return refuse(422, `新的字裡有可能弄壞程式的符號：${risky.map((c) => JSON.stringify(c)).join(' ')}`);
+
+  const where = await locate(config, input);
+  if (where.reply) return where.reply;
+  const { match } = where.found;
+  return applyChange(config, where.found, (content) => ({ content: replaceAt(content, match.index, match.length, to) }), { from, to });
+}
+
+async function restyle(config, input) {
+  const look = parseLook(input.look);
+  if (!look) return refuse(400, '樣式看不懂');
+  const where = await locate(config, input);
+  if (where.reply) return where.reply;
+  const { repo, match, from } = where.found;
+  return applyChange(config, where.found,
+    (content) => applyLook({ repo, file: match.file, content, match, look }),
+    { from, to: `（樣式）${describeLook(look)}` });
 }
 
 function pending({ stateDir }, input) {
@@ -135,6 +161,7 @@ const inTurn = (fn) => {
 function handle(key, input, config) {
   if (key === 'GET /pending') return Promise.resolve(pending(config, input));
   if (key === 'POST /fix') return inTurn(() => edit(config, input));
+  if (key === 'POST /style') return inTurn(() => restyle(config, input));
   return inTurn(() => submit(config, input));
 }
 

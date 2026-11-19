@@ -9,7 +9,7 @@ const { isDirectLocalVisit, renderSetupPage, SETUP_HEADERS } = require('./setup-
 
 const MAX_BODY_BYTES = 256 * 1024;
 const USERSCRIPT_PATH = path.join(__dirname, '..', 'fastfix.user.js');
-const FIX_ROUTES = ['POST /fix', 'POST /submit', 'GET /pending'];
+const FIX_ROUTES = ['POST /fix', 'POST /style', 'POST /submit', 'GET /pending'];
 const SETTINGS_ROUTES = ['POST /setup/sites', 'POST /setup/sites/remove'];
 
 class HttpError extends Error {
