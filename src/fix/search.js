@@ -9,7 +9,6 @@ const TEXT_EXTENSIONS = new Set([
   '.md', '.mdx', '.json', '.yml', '.yaml', '.txt', '.ejs', '.hbs', '.njk', '.pug', '.php', '.py', '.liquid',
 ]);
 const MAX_FILE_BYTES = 1024 * 1024;
-const GREP_CONCURRENCY = 8;
 
 // Every folder directly under a root that is a real git repository.
 // A worktree (".git" is a file) is skipped: it is a second copy of a repo.
@@ -25,22 +24,9 @@ function listRepos(roots) {
   });
 }
 
-async function mapLimit(items, limit, fn) {
-  const results = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next;
-      next += 1;
-      results[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
-
 const isEditable = (file) => TEXT_EXTENSIONS.has(path.extname(file).toLowerCase()) && !/\.min\.\w+$/i.test(file);
 
+// Every place the text appears in one project's tracked text files.
 async function matchesInRepo(repo, text) {
   let files = [];
   try { files = await grepFiles(repo, longestPiece(text)); } catch (_) { return []; }
@@ -49,19 +35,11 @@ async function matchesInRepo(repo, text) {
     try {
       if (fs.statSync(full).size > MAX_FILE_BYTES) return [];
       return findInContent(fs.readFileSync(full, 'utf8'), text)
-        .map((hit, nth) => ({ repo, file, nth, ...hit }));
+        .map((hit, nth) => ({ file, nth, ...hit }));
     } catch (_) {
       return [];
     }
   });
 }
 
-// Where the text lives: in the repo this site is already known to be, or
-// (first time on a site) in any repo under the roots.
-async function findMatches({ roots, knownRepo, text }) {
-  const repos = knownRepo ? [knownRepo] : listRepos(roots);
-  const perRepo = await mapLimit(repos, GREP_CONCURRENCY, (repo) => matchesInRepo(repo, text));
-  return perRepo.flat();
-}
-
-module.exports = { findMatches, listRepos };
+module.exports = { matchesInRepo, listRepos };

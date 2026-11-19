@@ -4,11 +4,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const fix = require('./fix');
+const { listSettings, setSite, removeSite } = require('./fix/settings');
 const { isDirectLocalVisit, renderSetupPage, SETUP_HEADERS } = require('./setup-page');
 
 const MAX_BODY_BYTES = 256 * 1024;
 const USERSCRIPT_PATH = path.join(__dirname, '..', 'fastfix.user.js');
 const FIX_ROUTES = ['POST /fix', 'POST /submit', 'GET /pending'];
+const SETTINGS_ROUTES = ['POST /setup/sites', 'POST /setup/sites/remove'];
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -22,12 +24,15 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+function sameSecret(given, wanted) {
+  const a = crypto.createHash('sha256').update(String(given)).digest();
+  const b = crypto.createHash('sha256').update(String(wanted)).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 function tokenMatches(req, token) {
   const match = /^Bearer (.+)$/.exec(req.headers.authorization || '');
-  if (!match) return false;
-  const given = crypto.createHash('sha256').update(match[1]).digest();
-  const wanted = crypto.createHash('sha256').update(token).digest();
-  return crypto.timingSafeEqual(given, wanted);
+  return Boolean(match) && sameSecret(match[1], token);
 }
 
 function readBody(req) {
@@ -60,6 +65,25 @@ async function readJson(req) {
   return data;
 }
 
+// The settings forms on the setup page. Same guard as the page itself, plus the
+// token the page carries, so no other web page can change which project a site edits.
+async function handleSettings(key, req, res, config) {
+  if (!isDirectLocalVisit(req)) {
+    req.resume();
+    throw new HttpError(403, '設定只能在這台電腦上直接改');
+  }
+  const form = new URLSearchParams(await readBody(req));
+  if (!sameSecret(form.get('token') || '', config.token)) throw new HttpError(401, '金鑰不對');
+  const result = key === 'POST /setup/sites'
+    ? setSite(config, form.get('host'), form.get('project'))
+    : removeSite(config, form.get('host'));
+  const back = new URLSearchParams(result.ok
+    ? { msg: key === 'POST /setup/sites' ? `已設定 ${result.host}` : `已移除 ${result.host}` }
+    : { err: result.error, host: form.get('host') || '' });
+  res.writeHead(303, { location: `/setup?${back}`, 'cache-control': 'no-store' });
+  res.end();
+}
+
 async function route(req, res, config) {
   const { pathname, searchParams } = new URL(req.url, 'http://local');
   const key = `${req.method} ${pathname}`;
@@ -69,8 +93,17 @@ async function route(req, res, config) {
   if (key === 'GET /setup') {
     if (!isDirectLocalVisit(req)) throw new HttpError(403, '設定頁只能在這台電腦上直接開');
     res.writeHead(200, SETUP_HEADERS);
-    return res.end(renderSetupPage({ token: config.token, roots: config.roots }));
+    return res.end(renderSetupPage({
+      token: config.token,
+      roots: config.roots,
+      ...listSettings(config),
+      host: searchParams.get('host') || '',
+      message: searchParams.get('msg') || '',
+      error: searchParams.get('err') || '',
+    }));
   }
+
+  if (SETTINGS_ROUTES.includes(key)) return handleSettings(key, req, res, config);
 
   if (key === 'GET /fastfix.user.js') {
     res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });

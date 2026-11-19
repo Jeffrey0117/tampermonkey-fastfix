@@ -2,9 +2,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { isDirty, commitFiles, push } = require('./git');
-const { findMatches } = require('./search');
-const { newRiskyChars, replaceAt } = require('./match');
-const { readState, writeState, repoPending, withPending, withSite } = require('./store');
+const { matchesInRepo } = require('./search');
+const { newRiskyChars, replaceAt, contextScore } = require('./match');
+const { readState, writeState, repoPending, withPending } = require('./store');
 
 const MAX_CHOICES = 12;
 const MAX_TEXT = 2000;
@@ -22,21 +22,28 @@ const pendingCount = (state, repo) => {
   return p.edits.length + p.unpushed.length;
 };
 
-const sameMatch = (pick) => (m) => m.repo === pick.repo && m.file === pick.file && m.nth === pick.nth;
-
-const publicMatch = ({ repo, file, nth, line, context }) => ({ repo, repoName: path.basename(repo), file, nth, line, context });
-
-async function locate({ roots, state, host, text }) {
-  const known = state.sites[host];
-  if (known && fs.existsSync(known)) {
-    const inKnown = await findMatches({ roots, knownRepo: known, text });
-    if (inKnown.length) return inKnown;
-  }
-  return findMatches({ roots, text });
+// The project for a site is a setting (see settings.js); nothing here guesses it.
+function projectFor(state, host) {
+  const repo = state.sites[host];
+  return repo && fs.existsSync(repo) ? repo : null;
 }
 
-async function applyEdit({ stateDir, state, host, match, from, to }) {
-  const { repo, file } = match;
+const publicMatch = ({ file, nth, line, context }) => ({ file, nth, line, context });
+
+// Same words in several places: the one whose surroundings look most like the
+// page wins. A tie is left for the person to settle.
+function clearWinner(matches, repo, hints) {
+  if (matches.length === 1) return matches[0];
+  const contents = new Map();
+  const scored = matches.map((m) => {
+    if (!contents.has(m.file)) contents.set(m.file, fs.readFileSync(path.join(repo, m.file), 'utf8'));
+    return { m, score: contextScore(contents.get(m.file), m, hints) };
+  }).sort((a, b) => b.score - a.score);
+  return scored[0].score > scored[1].score ? scored[0].m : null;
+}
+
+async function applyEdit({ stateDir, state, repo, match, from, to }) {
+  const { file } = match;
   const pending = repoPending(state, repo);
   const ours = [...pending.edits, ...pending.unpushed].some((e) => e.file === file);
   if (!ours && await isDirty(repo, file)) {
@@ -46,12 +53,12 @@ async function applyEdit({ stateDir, state, host, match, from, to }) {
   const content = fs.readFileSync(full, 'utf8');
   fs.writeFileSync(full, replaceAt(content, match.index, match.length, to), 'utf8');
   const edit = { file, from, to, at: new Date().toISOString() };
-  const next = withPending(withSite(state, host, repo), repo, { ...pending, edits: [...pending.edits, edit] });
+  const next = withPending(state, repo, { ...pending, edits: [...pending.edits, edit] });
   writeState(stateDir, next);
   return reply(200, { ok: true, status: 'done', repoName: path.basename(repo), file, line: match.line, pending: pendingCount(next, repo) });
 }
 
-async function edit({ stateDir, roots }, input) {
+async function edit({ stateDir }, input) {
   const from = typeof input.text === 'string' ? input.text.trim() : '';
   const to = typeof input.to === 'string' ? input.to.trim() : '';
   const host = hostOf(input.url);
@@ -63,20 +70,26 @@ async function edit({ stateDir, roots }, input) {
   if (risky.length) return refuse(422, `新的字裡有可能弄壞程式的符號：${risky.map((c) => JSON.stringify(c)).join(' ')}`);
 
   const state = readState(stateDir);
-  const matches = await locate({ roots, state, host, text: from });
-  if (!matches.length) return reply(200, { ok: true, status: 'notfound' });
+  const repo = projectFor(state, host);
+  if (!repo) return reply(200, { ok: true, status: 'unset', host });
+
+  const matches = await matchesInRepo(repo, from);
+  if (!matches.length) return reply(200, { ok: true, status: 'notfound', repoName: path.basename(repo) });
 
   const pick = input.pick && typeof input.pick === 'object' ? input.pick : null;
-  const chosen = pick ? matches.find(sameMatch(pick)) : (matches.length === 1 ? matches[0] : null);
+  const hints = { before: typeof input.before === 'string' ? input.before : '', after: typeof input.after === 'string' ? input.after : '' };
+  const chosen = pick
+    ? matches.find((m) => m.file === pick.file && m.nth === pick.nth)
+    : clearWinner(matches, repo, hints);
   if (pick && !chosen) return refuse(409, '那個位置已經變了，再試一次');
-  if (chosen) return applyEdit({ stateDir, state, host, match: chosen, from, to });
+  if (chosen) return applyEdit({ stateDir, state, repo, match: chosen, from, to });
   if (matches.length > MAX_CHOICES) return reply(200, { ok: true, status: 'toomany', count: matches.length });
-  return reply(200, { ok: true, status: 'choose', matches: matches.map(publicMatch) });
+  return reply(200, { ok: true, status: 'choose', repoName: path.basename(repo), matches: matches.map(publicMatch) });
 }
 
 function pending({ stateDir }, input) {
   const state = readState(stateDir);
-  const repo = state.sites[String(input.host || '')];
+  const repo = projectFor(state, String(input.host || ''));
   if (!repo) return reply(200, { ok: true, count: 0 });
   return reply(200, { ok: true, count: pendingCount(state, repo), repoName: path.basename(repo) });
 }
@@ -90,9 +103,8 @@ const commitMessage = (edits) => [
 ].join('\n');
 
 async function submit({ stateDir }, input) {
-  const host = hostOf(input.url);
   let state = readState(stateDir);
-  const repo = state.sites[host];
+  const repo = projectFor(state, hostOf(input.url));
   let entry = repo ? repoPending(state, repo) : { edits: [], unpushed: [] };
   if (!entry.edits.length && !entry.unpushed.length) return refuse(400, '沒有要送出的修改');
 
@@ -120,11 +132,10 @@ const inTurn = (fn) => {
   return run;
 };
 
-function handle(key, input, settings) {
-  if (!settings || !settings.stateDir || !Array.isArray(settings.roots)) return Promise.resolve(refuse(503, '沒有設定專案資料夾'));
-  if (key === 'GET /pending') return Promise.resolve(pending(settings, input));
-  if (key === 'POST /fix') return inTurn(() => edit(settings, input));
-  return inTurn(() => submit(settings, input));
+function handle(key, input, config) {
+  if (key === 'GET /pending') return Promise.resolve(pending(config, input));
+  if (key === 'POST /fix') return inTurn(() => edit(config, input));
+  return inTurn(() => submit(config, input));
 }
 
 module.exports = { handle };

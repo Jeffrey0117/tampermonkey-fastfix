@@ -5,7 +5,7 @@ const path = require('node:path');
 const FILE_NAME = 'state.json';
 const EMPTY = { sites: {}, pending: {} };
 
-// sites:   host -> repo folder it was last edited in
+// sites:   host -> repo folder (set on the settings page)
 // pending: repo folder -> { edits: [not committed], unpushed: [committed, not pushed] }
 function readState(stateDir) {
   try {
@@ -35,4 +35,9 @@ function withPending(state, repo, next) {
 
 const withSite = (state, host, repo) => ({ ...state, sites: { ...state.sites, [host]: repo } });
 
-module.exports = { readState, writeState, repoPending, withPending, withSite };
+function withoutSite(state, host) {
+  const { [host]: _removed, ...sites } = state.sites;
+  return { ...state, sites };
+}
+
+module.exports = { readState, writeState, repoPending, withPending, withSite, withoutSite };

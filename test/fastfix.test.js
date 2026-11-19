@@ -45,10 +45,14 @@ async function boot() {
     'src/app.js': "const cta = '馬上試試';\n",
     'dist/app.min.js': 'var a="壓縮過的字"',
   }, remotes);
-  const blog = makeRepo(roots, 'blog', { 'index.html': '<h1>部落格標題</h1>\n' });
+  const blog = makeRepo(roots, 'blog', { 'index.html': '<h1>部落格標題</h1>\n<p>立即免費開始</p>\n' });
+  const stateDir = path.join(base, 'state');
+  // the settings a person makes on the setup page before using it
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sites: { 'shop.example.com': shop, 'blog.example.com': blog }, pending: {} }));
   const server = createServer({
     token: TOKEN,
-    stateDir: path.join(base, 'state'),
+    stateDir,
     roots: [roots],
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -62,7 +66,7 @@ async function boot() {
     return { status: res.status, json: await res.json() };
   };
   const read = (repo, file) => fs.readFileSync(path.join(repo, file), 'utf8');
-  return { shop, blog, remotes, call, read, close: () => new Promise((r) => server.close(r)) };
+  return { shop, blog, remotes, call, read, url, close: () => new Promise((r) => server.close(r)) };
 }
 
 test('fix: one match is replaced in place and counted as pending', async () => {
@@ -73,6 +77,7 @@ test('fix: one match is replaced in place and counted as pending', async () => {
     assert.deepEqual({ status: r.json.status, repoName: r.json.repoName, file: r.json.file, pending: r.json.pending },
       { status: 'done', repoName: 'shop', file: 'pages/pricing.html', pending: 1 });
     assert.match(s.read(s.shop, 'pages/pricing.html'), /^<h1>先用再說<\/h1>\n/);
+    assert.match(s.read(s.blog, 'index.html'), /立即免費開始/, 'the same words in another project are not touched');
     const p = await s.call('GET', '/pending?host=shop.example.com');
     assert.deepEqual(p.json, { ok: true, count: 1, repoName: 'shop' });
   } finally { await s.close(); }
@@ -92,18 +97,28 @@ test('fix: several matches are listed, and the picked one is the only one change
   try {
     const list = await s.call('POST', '/fix', { text: '了解更多', to: '看方案', url: PAGE });
     assert.equal(list.json.status, 'choose');
-    assert.deepEqual(list.json.matches.map((m) => [m.repoName, m.file, m.line]), [['shop', 'pages/pricing.html', 4], ['shop', 'pages/pricing.html', 5]]);
-    const { repo, file, nth } = list.json.matches[1];
-    const r = await s.call('POST', '/fix', { text: '了解更多', to: '看方案', url: PAGE, pick: { repo, file, nth } });
+    assert.deepEqual(list.json.matches.map((m) => [m.file, m.line]), [['pages/pricing.html', 4], ['pages/pricing.html', 5]]);
+    const { file, nth } = list.json.matches[1];
+    const r = await s.call('POST', '/fix', { text: '了解更多', to: '看方案', url: PAGE, pick: { file, nth } });
     assert.equal(r.json.status, 'done');
     assert.match(s.read(s.shop, 'pages/pricing.html'), /<a>了解更多<\/a>\n<a>看方案<\/a>\n$/);
   } finally { await s.close(); }
 });
 
-test('fix: text that is in no repo, or only in a minified file, is reported as not found', async () => {
+test('fix: a site with no project set is refused, even when the words exist in some project', async () => {
   const s = await boot();
   try {
-    assert.equal((await s.call('POST', '/fix', { text: '別人網站上的字', to: 'x', url: 'https://other.example.org/' })).json.status, 'notfound');
+    const r = await s.call('POST', '/fix', { text: '立即免費開始', to: '先用再說', url: 'https://other.example.org/' });
+    assert.equal(r.json.status, 'unset');
+    assert.match(s.read(s.shop, 'pages/pricing.html'), /立即免費開始/);
+    assert.match(s.read(s.blog, 'index.html'), /立即免費開始/);
+  } finally { await s.close(); }
+});
+
+test('fix: text that is not in the project, or only in a minified file, is reported as not found', async () => {
+  const s = await boot();
+  try {
+    assert.equal((await s.call('POST', '/fix', { text: '部落格標題', to: 'x', url: PAGE })).json.status, 'notfound');
     assert.equal((await s.call('POST', '/fix', { text: '壓縮過的字', to: 'x', url: PAGE })).json.status, 'notfound');
     assert.equal(s.read(s.shop, 'dist/app.min.js'), 'var a="壓縮過的字"');
   } finally { await s.close(); }
@@ -162,5 +177,49 @@ test('fix: needs the token and JSON', async () => {
     assert.equal((await s.call('POST', '/fix', body, { 'content-type': 'text/plain' })).status, 415);
     assert.equal((await s.call('GET', '/nope')).status, 404);
     assert.match(s.read(s.shop, 'pages/pricing.html'), /立即免費開始/);
+  } finally { await s.close(); }
+});
+
+test('fix: of two identical sentences, the one whose surroundings match the page is changed without asking', async () => {
+  const s = await boot();
+  try {
+    fs.writeFileSync(path.join(s.shop, 'pages/faq.html'), '<section><h2>退款</h2><a>看說明</a></section>\n<section><h2>發票</h2><a>看說明</a></section>\n');
+    git(s.shop, 'add', '-A');
+    git(s.shop, 'commit', '-q', '-m', 'faq');
+    const r = await s.call('POST', '/fix', { text: '看說明', to: '怎麼開發票', url: PAGE, before: '發票', after: '' });
+    assert.equal(r.json.status, 'done');
+    assert.equal(s.read(s.shop, 'pages/faq.html'), '<section><h2>退款</h2><a>看說明</a></section>\n<section><h2>發票</h2><a>怎麼開發票</a></section>\n');
+  } finally { await s.close(); }
+});
+
+const form = (s, pathname, fields, headers = {}) => fetch(s.url + pathname, {
+  method: 'POST',
+  redirect: 'manual',
+  headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
+  body: new URLSearchParams(fields),
+});
+
+test('settings: the setup page sets and removes which project a site edits', async () => {
+  const s = await boot();
+  try {
+    const add = await form(s, '/setup/sites', { token: TOKEN, host: 'https://New.example.com/some/page', project: 'blog' });
+    assert.equal(add.status, 303);
+    const edited = await s.call('POST', '/fix', { text: '部落格標題', to: '新標題', url: 'https://new.example.com/' });
+    assert.equal(edited.json.status, 'done');
+    const page = await (await fetch(s.url + '/setup')).text();
+    assert.match(page, /<td>new\.example\.com<\/td>\s*<td>blog<\/td>/);
+    assert.equal((await form(s, '/setup/sites/remove', { token: TOKEN, host: 'new.example.com' })).status, 303);
+    assert.equal((await s.call('POST', '/fix', { text: '新標題', to: '再改', url: 'https://new.example.com/' })).json.status, 'unset');
+  } finally { await s.close(); }
+});
+
+test('settings: refused without the page token, from another site, or for a folder that is not a project', async () => {
+  const s = await boot();
+  try {
+    assert.equal((await form(s, '/setup/sites', { token: 'nope', host: 'x.example.com', project: 'blog' })).status, 401);
+    assert.equal((await form(s, '/setup/sites', { token: TOKEN, host: 'x.example.com', project: 'blog' }, { 'sec-fetch-site': 'cross-site' })).status, 403);
+    const bad = await form(s, '/setup/sites', { token: TOKEN, host: 'x.example.com', project: '..' });
+    assert.match(bad.headers.get('location'), /err=/);
+    assert.equal((await s.call('POST', '/fix', { text: '部落格標題', to: 'y', url: 'https://x.example.com/' })).json.status, 'unset');
   } finally { await s.close(); }
 });

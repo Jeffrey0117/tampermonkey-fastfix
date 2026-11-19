@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         fastFix
 // @namespace    fastfix
-// @version      0.1.0
+// @version      0.2.0
 // @description  Alt + 點網頁上的字，直接改掉自己網站原始碼裡的那段字。改完幾處再一次送出。
 // @homepageURL  https://github.com/Jeffrey0117/tampermonkey-fastfix
 // @updateURL    https://raw.githubusercontent.com/Jeffrey0117/tampermonkey-fastfix/main/fastfix.user.js
@@ -22,11 +22,12 @@
 
   const DEFAULT_ENDPOINT = 'http://127.0.0.1:4480';
   const QUICK_TIMEOUT_MS = 8000;
-  const WORK_TIMEOUT_MS = 100000;        // first search on a site looks through every repo; a push can be slow
+  const WORK_TIMEOUT_MS = 100000;        // a push can be slow
   const TOAST_MS = 2600;
   const LONG_TOAST_MS = 9000;
   const BOX_MIN = 260;
   const BOX_MAX = 520;
+  const NEAR_CHARS = 60;
 
   const endpoint = () => String(GM_getValue('endpoint', DEFAULT_ENDPOINT)).replace(/\/+$/, '');
   const token = () => String(GM_getValue('token', ''));
@@ -77,9 +78,10 @@
     .box .hint { margin-top: 6px; font-size: 11px; color: #A49A8E; }
     .box .note { margin-top: 8px; font-size: 13px; color: #B4412F; }
     .box .choice { display: block; width: 100%; margin-top: 6px; padding: 8px 10px; border: 1px solid #EBE4DA; border-radius: 10px;
-                   background: #fff; color: inherit; font: inherit; text-align: left; cursor: pointer; word-break: break-all; }
+                   background: #fff; color: inherit; font: 12px/1.5 Consolas, 'Noto Sans TC', monospace; text-align: left; cursor: pointer;
+                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .box .choice:hover { background: #FCF1DD; }
-    .box .choice b { display: block; font-size: 12px; color: #A49A8E; }
+    .box .choice b { display: block; font: 700 12px/1.5 'Noto Sans TC', system-ui, sans-serif; color: #A49A8E; }
     .toast { z-index: 2147483647; right: 18px; bottom: 18px; max-width: 340px; padding: 10px 14px; background: #1F1B16; color: #fff;
              border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.25); word-break: break-all; }
     .toast.bad { background: #B4412F; }
@@ -113,11 +115,15 @@
     return node;
   }
 
-  function toast(message, bad, ms) {
+  function toast(message, bad, ms, onClick) {
     const r = shadow();
     const old = r.querySelector('.toast');
     if (old) old.remove();
     const el = make('div', bad ? 'toast bad' : 'toast', message);
+    if (onClick) {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', onClick);
+    }
     r.appendChild(el);
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.remove(), ms || TOAST_MS);
@@ -183,6 +189,24 @@
     return range && range.startContainer;
   }
 
+  // The words just before and after the clicked text, as the page shows them.
+  // They tell two identical sentences in the same project apart.
+  function surroundings(range) {
+    try {
+      const node = range.commonAncestorContainer;
+      const block = node.nodeType === Node.TEXT_NODE ? (node.parentElement.parentElement || node.parentElement) : node;
+      const before = document.createRange();
+      before.selectNodeContents(block);
+      before.setEnd(range.startContainer, range.startOffset);
+      const after = document.createRange();
+      after.selectNodeContents(block);
+      after.setStart(range.endContainer, range.endOffset);
+      return { before: String(before).slice(-NEAR_CHARS), after: String(after).slice(0, NEAR_CHARS) };
+    } catch (_) {
+      return { before: '', after: '' };
+    }
+  }
+
   // A selection wins; otherwise the whole run of text under the pointer.
   function targetAt(x, y) {
     const selection = window.getSelection();
@@ -231,6 +255,7 @@
     const note = make('div', 'note');
     note.hidden = true;
     const choices = make('div');
+    const near = surroundings(range);
 
     const say = (message) => { note.textContent = message; note.hidden = !message; };
     const busy = (on) => { input.readOnly = on; hint.textContent = on ? '在找這段字…' : 'Enter 改 · Esc 取消'; };
@@ -243,21 +268,26 @@
         showChip(data.pending);
         toast('已改 ' + data.repoName + ' / ' + data.file);
       } else if (data.status === 'choose') {
-        say('有 ' + data.matches.length + ' 處一樣的字，要改哪一個？');
+        say(data.repoName + ' 裡有 ' + data.matches.length + ' 處一樣的字，改哪一個？');
         for (const m of data.matches) {
           const btn = make('button', 'choice');
           btn.type = 'button';
-          btn.appendChild(make('b', '', m.repoName + ' / ' + m.file + ' : ' + m.line));
+          btn.title = m.context;
+          btn.appendChild(make('b', '', m.file + ' 第 ' + m.line + ' 行'));
           btn.appendChild(document.createTextNode(m.context));
-          btn.addEventListener('click', () => send({ repo: m.repo, file: m.file, nth: m.nth }));
+          btn.addEventListener('click', () => send({ file: m.file, nth: m.nth }));
           choices.appendChild(btn);
         }
       } else if (data.status === 'toomany') {
         say('有 ' + data.count + ' 處一樣的字。先選取長一點的一段，再 Alt + 點。');
+      } else if (data.status === 'unset') {
+        closeBox();
+        toast('這個網站還沒設定專案。點這裡去設定頁加一行。', true, LONG_TOAST_MS,
+          () => window.open(endpoint() + '/setup?host=' + encodeURIComponent(location.host), '_blank'));
       } else {
         closeBox();
         GM_setClipboard(aiPrompt(text, to));
-        toast('原始碼裡找不到這段字，這裡改不了。已複製一句給 AI 的指令，貼給它就能改。', true, LONG_TOAST_MS);
+        toast(data.repoName + ' 裡找不到這段字，這裡改不了。已複製一句給 AI 的指令，貼給它就能改。', true, LONG_TOAST_MS);
       }
     };
 
@@ -267,7 +297,7 @@
       busy(true);
       say('');
       choices.textContent = '';
-      call('POST', '/fix', { text, to, url: location.href, pick }, WORK_TIMEOUT_MS)
+      call('POST', '/fix', { text, to, url: location.href, pick, ...near }, WORK_TIMEOUT_MS)
         .then((data) => { busy(false); onReply(data, to); })
         .catch((err) => { busy(false); say(err.message); });
     }

@@ -4,6 +4,8 @@
 // the replacement but were not in the original text.
 const RISKY = /[<>{}`"'\\\r\n]/g;
 const CONTEXT_MAX = 160;
+const WINDOW = 400;
+const HINT_MIN = 2;
 
 const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -41,6 +43,22 @@ function newRiskyChars(from, to) {
   return [...new Set(String(to).match(RISKY) || [])].filter((c) => !had.has(c));
 }
 
+// How much the source around a match looks like the page around the click:
+// the number of nearby page words that also sit near the match.
+// each page word found near the match counts, and counts more the closer it is.
+function contextScore(content, match, { before = '', after = '' }) {
+  const lead = content.slice(Math.max(0, match.index - WINDOW), match.index);
+  const tail = content.slice(match.index + match.length, match.index + match.length + WINDOW);
+  const words = (text) => [...new Set(pieces(text))].filter((w) => w.length >= HINT_MIN);
+  const closeness = (distance) => (distance < 0 ? 0 : 1 - distance / (WINDOW + 1));
+  const leadScore = words(before).reduce((sum, w) => {
+    const at = lead.lastIndexOf(w);
+    return sum + closeness(at < 0 ? -1 : lead.length - at - w.length);
+  }, 0);
+  const tailScore = words(after).reduce((sum, w) => sum + closeness(tail.indexOf(w)), 0);
+  return leadScore + tailScore;
+}
+
 const replaceAt = (content, index, length, to) => content.slice(0, index) + to + content.slice(index + length);
 
-module.exports = { findInContent, longestPiece, newRiskyChars, replaceAt };
+module.exports = { findInContent, longestPiece, newRiskyChars, replaceAt, contextScore };
