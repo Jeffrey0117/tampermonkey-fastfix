@@ -90,6 +90,12 @@ async function route(req, res, config) {
 
   if (key === 'GET /health') return sendJson(res, 200, { ok: true });
 
+  // The bare address is the setup page: there is nothing else to see here.
+  if (key === 'GET /') {
+    res.writeHead(302, { location: '/setup', 'cache-control': 'no-store' });
+    return res.end();
+  }
+
   if (key === 'GET /setup') {
     if (!isSetupPageVisit(req)) throw new HttpError(403, '設定頁只能在這台電腦上直接開');
     res.writeHead(200, SETUP_HEADERS);

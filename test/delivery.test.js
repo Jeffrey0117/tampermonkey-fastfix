@@ -186,3 +186,11 @@ test('setup page: opens when reached by a link from another page, but its conten
     assert.equal(await get({ 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' }), 403, 'framed by another page');
   } finally { await s.close(); }
 });
+
+test('the bare address leads to the setup page', async () => {
+  const s = await boot();
+  try {
+    const res = await fetch(s.url + '/', { redirect: 'manual' });
+    assert.deepEqual([res.status, res.headers.get('location')], [302, '/setup']);
+  } finally { await s.close(); }
+});
