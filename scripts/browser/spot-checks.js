@@ -21,7 +21,7 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' 
   fs.mkdirSync(site, { recursive: true });
   fs.mkdirSync(live, { recursive: true });
   fs.writeFileSync(path.join(site, 'index.html'),
-    '<!doctype html><meta charset="utf-8"><body style="font:20px sans-serif;padding:60px">\n<h1 id="t">立即免費開始</h1>\n<p id="dup">先用再說</p>\n<p id="s">樣式這段</p>\n<p id="j"></p>\n<script src="/app.js"></script>\n');
+    '<!doctype html><meta charset="utf-8"><body style="font:20px sans-serif;padding:60px">\n<h1 id="t">立即免費開始</h1>\n<p id="dup">先用再說</p>\n<p id="j"></p>\n<script src="/app.js"></script>\n');
   fs.writeFileSync(path.join(site, 'app.js'), 'document.getElementById("j").textContent = "馬上試試";\n');
   // the "deploy": six seconds later the live copy catches up with the source
   fs.writeFileSync(path.join(site, 'deploy.js'),
@@ -97,32 +97,12 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' 
   assert.match(liveHtml(), /立即免費開始/, 'still not deployed: what is shown was put back by the script');
 
   // the deploy lands: reload by itself, no outline left
-  let before = loads;
+  const before = loads;
   await page.getByText('已上線 ✓').waitFor({ timeout: 30000 });
-  for (let i = 0; i < 150 && loads <= before; i += 1) await page.waitForTimeout(100);   // the reload itself
   for (let i = 0; i < 150 && loads <= before; i += 1) await page.waitForTimeout(100);   // the reload itself
   await page.waitForFunction(() => document.getElementById('t').style.outline === '' && document.getElementById('t').textContent === '先用再說', null, { timeout: 15000 });
   assert.ok(loads > before, 'reloaded by itself');
-  await page.waitForTimeout(1500);
-
-  // 3. a change of look only: it is checked at its spot too
-  await page.locator('#s').click({ modifiers: ['Alt'] });
-  await page.locator('.box button', { hasText: 'A+' }).click();
-  await page.locator('.box button', { hasText: '粗' }).click();
-  await page.locator('textarea').press('Enter');
-  await page.getByText('已送出，等網站更新').waitFor();
-  assert.equal(await page.getByText('沒辦法自動確認').count(), 0);
-  assert.doesNotMatch(liveHtml(), /id="s"[^>]*style=|style=[^>]*id="s"/, 'look not deployed yet');
   await page.screenshot({ path: shotPath });
-  await page.reload();                                   // F5: the look comes back as well
-  await page.waitForFunction(() => document.getElementById('s').style.fontSize !== '' && document.getElementById('s').style.outline === '', null, { timeout: 10000 });
-  before = loads;
-  await page.getByText('已上線 ✓').waitFor({ timeout: 30000 });
-  for (let i = 0; i < 150 && loads <= before; i += 1) await page.waitForTimeout(100);   // the reload itself
-  for (let i = 0; i < 150 && loads <= before; i += 1) await page.waitForTimeout(100);   // the reload itself
-  await page.waitForFunction(() => document.getElementById('s').style.outline === '' && document.getElementById('s').style.fontSize !== '', null, { timeout: 15000 });
-  assert.ok(loads > before, 'reloaded by itself after the look went live');
-  assert.match(liveHtml(), /<p style="[^"]*font-size[^"]*" id="s">|<p id="s" style="[^"]*font-size/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8')).deliveries[site].status, 'live');
 
   await browser.close();

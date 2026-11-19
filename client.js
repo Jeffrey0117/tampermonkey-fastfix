@@ -13,7 +13,6 @@
   const BOX_MIN = 320;
   const BOX_MAX = 520;
   const NEAR_CHARS = 60;
-  const SIZES = [12, 14, 16, 18, 20, 24, 30, 36, 48, 60, 72, 96, 128];
   const HINT = 'Enter 送出 · Shift+Enter 換行 · Esc 取消';
   const WATCH_EVERY_MS = 2000;           // how often the site is looked at after a send
   const GIVE_UP_S = 300;
@@ -71,13 +70,11 @@
     .box .tools button { min-width: 34px; height: 30px; padding: 0 8px; border: 1px solid #E0D7CA; border-radius: 8px; background: #fff;
                          color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
     .box .tools button:hover { background: #FCF1DD; }
-    .box .tools .gap { width: 8px; }
-    .box .tools .push { flex: 1; }
-    .box .tools button, .box .tools input { flex: 0 0 auto; white-space: nowrap; }
+    .box .tools .hint { flex: 1; }
+    .box .tools button { flex: 0 0 auto; white-space: nowrap; }
     .box .tools button.go { padding: 0 16px; border-color: #E09A2E; background: #E09A2E; color: #fff; font-weight: 700; }
     .box .tools button.go:hover { background: #C98622; }
-    .box .tools input { width: 34px; height: 30px; padding: 2px; border: 1px solid #E0D7CA; border-radius: 8px; background: #fff; cursor: pointer; }
-    .box .hint { margin-top: 6px; font-size: 11px; color: #A49A8E; }
+    .box .hint { font-size: 11px; color: #A49A8E; }
     .box .note { margin-top: 8px; font-size: 13px; color: #B4412F; }
     .box .choice { display: block; width: 100%; margin-top: 6px; padding: 8px 10px; border: 1px solid #EBE4DA; border-radius: 10px;
                    background: #fff; color: inherit; font: 12px/1.5 Consolas, 'Noto Sans TC', monospace; text-align: left; cursor: pointer;
@@ -103,7 +100,6 @@
   let root = null;
   let boxEl = null;
   let chipEl = null;
-  let undoPreview = null;                // puts the element back if the box closes without saving
   let toastTimer = 0;
 
   function shadow() {
@@ -143,8 +139,6 @@
     if (!boxEl) return;
     boxEl.remove();
     boxEl = null;
-    if (undoPreview) undoPreview();
-    undoPreview = null;
   }
 
   function editedHosts() {
@@ -210,10 +204,6 @@
   //   unknown  the spot cannot be found in what the server sends (drawn by scripts, or the page moved)
   const lastHtml = {};
   const spotIn = (doc, path) => { try { return doc && path ? doc.querySelector(path) : null; } catch (_) { return null; } };
-  function sameLook(el, look) {
-    const probe = document.createElement('span');
-    return Object.keys(look).every((k) => { probe.style[k] = look[k]; return el.style[k] && el.style[k] === probe.style[k]; });
-  }
   // Words with a line break in them end up in separate paragraphs: each line is looked for by
   // itself, and the old words must be gone (a break added to them leaves every line where it was).
   const linesOf = (check) => check.to.split('\n').map((l) => squash(l).trim()).filter(Boolean);
@@ -223,11 +213,6 @@
     const el = spotIn(doc, check.path);
     if (!el) return 'unknown';
     const text = squash(el.textContent);
-    if (check.look) {
-      if (!check.text || !text.includes(squash(check.text))) return 'unknown';
-      if (check.classes) return check.classes.every((c) => el.classList.contains(c)) ? 'yes' : 'no';
-      return sameLook(el, check.look) ? 'yes' : 'no';
-    }
     if (text.includes(squash(check.to))) return 'yes';
     const old = Boolean(check.from) && text.includes(squash(check.from));
     if (manyLines(check) && !old && linesOf(check).every((l) => text.includes(l))) return 'yes';
@@ -242,7 +227,7 @@
     try { doc = html ? new DOMParser().parseFromString(html, 'text/html') : null; } catch (_) { /* judged by the words alone */ }
     const said = checks.map((c) => spotSays(doc, c));
     // words whose spot could not be found: anywhere in the page or its scripts will do
-    const loose = checks.filter((c, i) => said[i] === 'unknown' && !c.look);
+    const loose = checks.filter((c, i) => said[i] === 'unknown');
     const squashed = squash(html);
     const stillOld = (c) => manyLines(c) && Boolean(c.from) && has(squashed, c.from);
     let missing = loose.filter((c) => stillOld(c) || !shownIn(squashed, c));
@@ -251,16 +236,14 @@
       missing = missing.filter((c) => stillOld(c) || !scripts.some((text) => shownIn(text, c)));
     }
     lastHtml[url] = html;
-    const looksUnknown = checks.filter((c, i) => said[i] === 'unknown' && c.look).length;
-    if (said.includes('no') || missing.length) return 'waiting';
-    return looksUnknown === checks.length ? 'cant' : 'live';
+    return said.includes('no') || missing.length ? 'waiting' : 'live';
   }
 
-  // 'live' when every page shows its changes, 'cant' when there is nothing that can be checked.
+  // 'live' when every page shows its changes.
   function allLive(checks, round) {
     const pages = [...new Set(checks.map((c) => c.page))];
     return Promise.all(pages.map((page) => pageShows(page, checks.filter((c) => c.page === page), round)))
-      .then((results) => (results.includes('waiting') ? 'waiting' : (results.every((r) => r === 'cant') ? 'cant' : 'live')));
+      .then((results) => (results.includes('waiting') ? 'waiting' : 'live'));
   }
 
   // After a reload in the middle of a wait the page is the old one again: put the
@@ -274,10 +257,7 @@
       const el = c.page === here ? spotIn(document, c.path) : null;
       if (!el) continue;
       try {
-        if (c.look) {
-          if (!c.text || !squash(el.textContent).includes(squash(c.text))) continue;
-          Object.assign(el.style, c.look);
-        } else if (!el.textContent.includes(c.to)) {
+        if (!el.textContent.includes(c.to)) {
           const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
           let node = walker.nextNode();
           while (node && !node.textContent.includes(c.from)) node = walker.nextNode();
@@ -324,7 +304,6 @@
     allLive(delivery.checks, round).then((live) => {
       if (mine !== watching) return;
       if (live === 'live') land();
-      else if (live === 'cant') cantTell();
       else watchTimer = setTimeout(() => watch(delivery, round + 1, mine), WATCH_EVERY_MS);
     });
   }
@@ -362,18 +341,6 @@
   }
 
   // ---- what was clicked ----
-  // The element as the page shows it: its tag and classes, and those of everything
-  // around it. In a Tailwind project these are the very strings in the source, so
-  // the service can tell which element it is without anything added to the site.
-  const classesOf = (n) => (typeof n.className === 'string' ? n.className.split(/\s+/).filter(Boolean) : []);
-  function markOf(el) {
-    const chain = [];
-    for (let p = el.parentElement; p && p !== document.documentElement && chain.length < 20; p = p.parentElement) {
-      chain.push({ tag: p.localName, classes: classesOf(p) });
-    }
-    return { tag: el.localName, classes: classesOf(el), chain, width: window.innerWidth };
-  }
-
   // Where the element is on this page: unique here, and good until the page's layout changes.
   function pathOf(el) {
     const parts = [];
@@ -423,7 +390,7 @@
     return { text: node.textContent.trim(), range };
   }
 
-  // The new words and look show at once, so there is nothing to sit and wait for.
+  // The new words show at once, so there is nothing to sit and wait for.
   // Nothing is drawn around the changed spot: the chip, bottom right, says how far it got.
   function swapOnPage(range, to) {
     try {
@@ -437,21 +404,8 @@
     } catch (_) { /* the page changed under us; the reload will show it */ }
   }
 
-  const lookWords = (look) => [
-    look.fontSize && '字大小 ' + look.fontSize,
-    look.fontWeight && '粗細 ' + look.fontWeight,
-    look.color && '顏色 ' + look.color,
-  ].filter(Boolean).join('、');
-
-  const aiPrompt = (from, to, look) => '網頁上的「' + from + '」這段字'
-    + (to ? '，改成「' + to + '」' : '')
-    + (lookWords(look) ? '，樣式改成 ' + lookWords(look) : '')
-    + '。頁面：' + location.href + '。直接搜原始碼找不到這段字，它可能是程式拼出來的，或來自資料庫、設定檔。';
-
-  function rgbToHex(rgb) {
-    const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(rgb);
-    return m ? '#' + [m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, '0')).join('') : '#000000';
-  }
+  const aiPrompt = (from, to) => '網頁上的「' + from + '」這段字，改成「' + to + '」。頁面：' + location.href
+    + '。直接搜原始碼找不到這段字，它可能是程式拼出來的，或來自資料庫、設定檔。';
 
   function placeBox(range) {
     const at = range.getBoundingClientRect();
@@ -479,61 +433,18 @@
     const say = (message) => { note.textContent = message; note.hidden = !message; };
     const busy = (on) => { input.readOnly = on; hint.textContent = on ? '在找這段字…' : HINT; };
 
-    // How the words look: size, weight, colour. Shown on the page at once,
-    // written to the source together with the words on Enter.
     const holder = range.commonAncestorContainer;
     const el = holder.nodeType === Node.TEXT_NODE ? holder.parentElement : holder;
-    const shown = getComputedStyle(el);
-    const original = { fontSize: el.style.fontSize, fontWeight: el.style.fontWeight, color: el.style.color };
-    let look = {};
-    let lookSaved = false;
-    let keepPreview = false;
-    undoPreview = () => { if (!keepPreview) Object.assign(el.style, original); };
-
-    const preview = (change) => {
-      look = { ...look, ...change };
-      lookSaved = false;
-      Object.assign(el.style, change);
-      placeBox(range);
-    };
-    const stepSize = (dir) => {
-      const now = Math.round(parseFloat(look.fontSize || shown.fontSize));
-      const next = dir > 0 ? SIZES.find((s) => s > now) : [...SIZES].reverse().find((s) => s < now);
-      if (next) preview({ fontSize: next + 'px' });
-    };
-    const stepWeight = (dir) => {
-      const now = Math.round(Number(look.fontWeight || shown.fontWeight) / 100) * 100;
-      const next = Math.max(100, Math.min(900, now + dir * 100));
-      if (next !== now) preview({ fontWeight: String(next) });
-    };
-    const tool = (label, title, onClick) => {
-      const btn = make('button', '', label);
-      btn.type = 'button';
-      btn.title = title;
-      btn.addEventListener('mousedown', (e) => e.preventDefault());   // keep the caret in the text box
-      btn.addEventListener('click', onClick);
-      tools.appendChild(btn);
-    };
-    tool('A−', '字小一點', () => stepSize(-1));
-    tool('A+', '字大一點', () => stepSize(1));
-    tools.appendChild(make('span', 'gap'));
-    tool('細', '細一點', () => stepWeight(-1));
-    tool('粗', '粗一點', () => stepWeight(1));
-    tools.appendChild(make('span', 'gap'));
-    const colour = make('input');
-    colour.type = 'color';
-    colour.title = '字的顏色';
-    colour.value = rgbToHex(shown.color);
-    colour.addEventListener('input', () => preview({ color: colour.value }));
-    tools.appendChild(colour);
-    tools.appendChild(make('span', 'push'));
-    tool('送出', '改完直接送出', () => send());
-    tools.lastChild.className = 'go';
+    const go = make('button', 'go', '送出');
+    go.type = 'button';
+    go.addEventListener('mousedown', (e) => e.preventDefault());      // keep the caret in the text box
+    go.addEventListener('click', () => send());
+    tools.appendChild(hint);
+    tools.appendChild(go);
 
     const finish = (data, to) => {
-      keepPreview = true;
       closeBox();
-      if (to) swapOnPage(range, to);
+      swapOnPage(range, to);
       rememberHost();
       showState({ count: data.pending });
       submitNow();                                             // one step: changing it is sending it
@@ -565,32 +476,19 @@
           () => window.open(endpoint() + '/setup?host=' + encodeURIComponent(location.host), '_blank'));
       } else {
         closeBox();
-        GM_setClipboard(aiPrompt(text, to, look));
+        GM_setClipboard(aiPrompt(text, to));
         toast(data.repoName + ' 裡找不到這段字，這裡改不了。已複製一句給 AI 的指令，貼給它就能改。', true, LONG_TOAST_MS);
       }
     };
 
-    // The look goes first: it is found by the old words, which the second step replaces.
     function send(pick) {
-      const typed = input.value.trim();
-      const to = typed && typed !== text ? typed : '';
-      const lookChanged = Object.keys(look).length > 0 && !lookSaved;
-      if (!to && !lookChanged) { say('還沒改任何東西'); return; }
-      const where = { text, url: location.href, path: pathOf(el), pick, ...near };
-      const steps = [
-        lookChanged && (() => call('POST', '/style', { ...where, look, mark: markOf(el) }, WORK_TIMEOUT_MS).then((data) => {
-          if (data.status === 'done') lookSaved = true;
-          return data;
-        })),
-        to && (() => call('POST', '/fix', { ...where, to }, WORK_TIMEOUT_MS)),
-      ].filter(Boolean);
-      const run = (i, last) => (i === steps.length
-        ? finish(last, to)
-        : steps[i]().then((data) => (data.status === 'done' ? run(i + 1, data) : onStopped(data, to))));
+      const to = input.value.trim();
+      if (!to || to === text) { say('還沒改任何東西'); return; }
       busy(true);
       say('');
       choices.textContent = '';
-      Promise.resolve().then(() => run(0, null))
+      call('POST', '/fix', { text, to, url: location.href, path: pathOf(el), pick, ...near }, WORK_TIMEOUT_MS)
+        .then((data) => (data.status === 'done' ? finish(data, to) : onStopped(data, to)))
         .then(() => busy(false))
         .catch((err) => { busy(false); say(err.message); });
     }
@@ -603,7 +501,6 @@
 
     boxEl.appendChild(input);
     boxEl.appendChild(tools);
-    boxEl.appendChild(hint);
     boxEl.appendChild(note);
     boxEl.appendChild(choices);
     shadow().appendChild(boxEl);

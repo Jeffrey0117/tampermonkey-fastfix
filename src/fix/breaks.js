@@ -1,6 +1,14 @@
 'use strict';
 const path = require('node:path');
-const { loadParser } = require('./element');
+
+// The project's own TypeScript reads its files best; ours is the fallback.
+function loadParser(repo) {
+  for (const from of [path.join(repo, 'node_modules', 'typescript'), 'typescript']) {
+    // TypeScript 7 has no parser to call from JavaScript; such a copy is skipped
+    try { const ts = require(from); if (typeof ts.createSourceFile === 'function') return ts; } catch (_) { /* try the next one */ }
+  }
+  return null;
+}
 
 // A line break typed in the box (Shift+Enter). What has to be written for it
 // depends on where the words live:

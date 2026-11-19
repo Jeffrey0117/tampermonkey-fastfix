@@ -97,14 +97,13 @@ test('send: leaves a delivery that waits until the page is seen with the new wor
   } finally { await s.close(); }
 });
 
-test('send: words changed twice are only looked for in their last form; look-only edits have nothing to look for', async () => {
+test('send: words changed twice are only looked for in their last form', async () => {
   const s = await boot();
   try {
     await s.call('POST', '/fix', { text: '立即免費開始', to: '先用再說', url: PAGE });
     await s.call('POST', '/fix', { text: '先用再說', to: '馬上開始', url: PAGE });
-    await s.call('POST', '/style', { text: '了解方案', look: { fontWeight: '700' }, url: PAGE });
     const sent = await s.call('POST', '/submit', { url: PAGE });
-    assert.equal(sent.json.count, 3);
+    assert.equal(sent.json.count, 2);
     assert.deepEqual(sent.json.delivery.checks, [{ page: PAGE, path: '', from: '立即免費開始', to: '馬上開始' }], 'one check, from the first words to the last');
   } finally { await s.close(); }
 });
@@ -220,17 +219,14 @@ test('the installed script is only a loader; the code it runs comes fresh from t
   } finally { await s.close(); }
 });
 
-test('a check remembers where on the page the change is; a look-only change can be checked too', async () => {
+test('a check remembers where on the page the change is', async () => {
   const s = await boot();
   try {
     const spot = 'body > main:nth-child(1) > h1:nth-child(2)';
     await s.call('POST', '/fix', { text: '立即免費開始', to: '先用再說', url: PAGE, path: spot });
-    await s.call('POST', '/style', { text: '先用再說', look: { fontSize: '48px', color: '#B4412F' }, url: PAGE, path: spot });
-    await s.call('POST', '/style', { text: '先用再說', look: { fontWeight: '800' }, url: PAGE, path: spot });
     const sent = await s.call('POST', '/submit', { url: PAGE });
     assert.deepEqual(sent.json.delivery.checks, [
       { page: PAGE, path: spot, from: '立即免費開始', to: '先用再說' },
-      { page: PAGE, path: spot, text: '先用再說', look: { fontSize: '48px', color: '#b4412f', fontWeight: '800' } },
     ]);
   } finally { await s.close(); }
 });

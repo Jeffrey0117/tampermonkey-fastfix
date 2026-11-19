@@ -10,7 +10,6 @@ const { createServer } = require('../src/server');
 const TOKEN = 'test-token-0123456789';
 const HOST = 'shop.example.com';
 const PAGE = `https://${HOST}/`;
-const SPOT = 'body > main:nth-child(1) > h1:nth-child(1)';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -71,66 +70,6 @@ async function boot() {
   return { base, shop, bare, call, source, close: () => new Promise((r) => server.close(r)) };
 }
 
-const MAIN = { tag: 'main', classes: ['mx-auto', 'max-w-5xl'] };
-const H1 = { tag: 'h1', classes: ['text-4xl', 'md:text-6xl', 'font-bold', 'text-stone-900'], chain: [MAIN] };
-
-test('look: on a wide screen it changes the class in charge there and leaves the small-screen one', async () => {
-  const s = await boot();
-  try {
-    const res = await s.call('POST', '/style', {
-      text: '立即免費開始', url: PAGE, path: SPOT, mark: { ...H1, width: 1280 },
-      look: { fontSize: '72px', fontWeight: '800', color: '#B4412F' },
-    });
-    assert.equal(res.json.status, 'done');
-    assert.match(s.source(), /<h1 className="text-4xl md:text-7xl font-extrabold text-\[#b4412f\]">立即免費開始<\/h1>/);
-    const sent = await s.call('POST', '/submit', { url: PAGE });
-    assert.deepEqual(sent.json.delivery.checks[0].classes, ['md:text-7xl', 'font-extrabold', 'text-[#b4412f]'], 'what to look for on the page once it is live');
-  } finally { await s.close(); }
-});
-
-test('look: on a phone-sized screen it changes the small-screen class only', async () => {
-  const s = await boot();
-  try {
-    await s.call('POST', '/style', { text: '立即免費開始', url: PAGE, mark: { ...H1, width: 375 }, look: { fontSize: '48px' } });
-    assert.match(s.source(), /<h1 className="text-5xl md:text-6xl font-bold text-stone-900">/);
-  } finally { await s.close(); }
-});
-
-test('look: words that come from a list further up are restyled on the element that shows them', async () => {
-  const s = await boot();
-  try {
-    const res = await s.call('POST', '/style', {
-      text: '線上課程', url: PAGE, look: { fontSize: '20px' },
-      mark: { tag: 'li', classes: ['px-10', 'text-sm'], chain: [{ tag: 'ul', classes: ['flex', 'gap-4'] }, MAIN], width: 1280 },
-    });
-    assert.equal(res.json.status, 'done');
-    assert.match(s.source(), /className=\{cn\('px-10 text-xl', item === '數位商品' && 'font-bold'\)\}/);
-    assert.match(s.source(), /const items = \['線上課程', '數位商品'\];/, 'the words themselves are untouched');
-  } finally { await s.close(); }
-});
-
-test('look: words that are not in the project at all (a database) can still be restyled', async () => {
-  const s = await boot();
-  try {
-    const mark = { tag: 'p', classes: ['text-base', 'text-muted-foreground'], chain: [MAIN], width: 1280 };
-    const res = await s.call('POST', '/style', { text: '資料庫來的標題', url: PAGE, mark, look: { fontWeight: '700' } });
-    assert.equal(res.json.status, 'done');
-    assert.match(s.source(), /<p className="text-base text-muted-foreground font-bold">\{title\}<\/p>/);
-    assert.equal((await s.call('POST', '/fix', { text: '資料庫來的標題', to: 'x', url: PAGE })).json.status, 'notfound', 'the words still cannot be changed here');
-  } finally { await s.close(); }
-});
-
-test('look: two elements that look the same are not guessed at', async () => {
-  const s = await boot();
-  try {
-    const before = s.source();
-    const mark = { tag: 'span', classes: ['badge'], chain: [MAIN], width: 1280 };
-    const res = await s.call('POST', '/style', { text: '資料庫來的標題', url: PAGE, mark, look: { fontWeight: '700' } });
-    assert.equal(res.json.status, 'notfound');
-    assert.equal(s.source(), before);
-  } finally { await s.close(); }
-});
-
 test('a project that another machine pushed to is brought up to date before it is touched', async () => {
   const s = await boot();
   try {
@@ -173,7 +112,7 @@ test('a project that cannot be brought up to date says so instead of editing an 
 });
 
 // A site written the pagetext-kit way: the page holds no words, its text file does.
-test('a page that keeps its words in a text file: the words and the look are both changed in the right file', async () => {
+test('a page that keeps its words in a text file: the words are changed in the text file, the page is left alone', async () => {
   const s = await boot();
   try {
     const dir = path.join(s.shop, 'app', 'pricing');
@@ -189,11 +128,6 @@ test('a page that keeps its words in a text file: the words and the look are bot
     const fixed = await s.call('POST', '/fix', { text: '一個價錢，全部功能', to: '一個價錢，什麼都有', url });
     assert.equal(fixed.json.status, 'done');
     assert.match(read('page.text.ts'), /title: '一個價錢，什麼都有'/);
-
-    const mark = { tag: 'h2', classes: ['text-3xl', 'font-semibold'], chain: [{ tag: 'section', classes: ['py-20'] }], width: 1280 };
-    const styled = await s.call('POST', '/style', { text: '一個價錢，什麼都有', url, mark, look: { fontSize: '36px' } });
-    assert.equal(styled.json.status, 'done');
-    assert.match(read('page.tsx'), /<h2 className="text-4xl font-semibold">\{t\.hero\.title\}<\/h2>/);
-    assert.match(read('page.text.ts'), /title: '一個價錢，什麼都有'/, 'the look change left the words alone');
+    assert.match(read('page.tsx'), /\{t\.hero\.title\}/, 'the page itself is untouched');
   } finally { await s.close(); }
 });
