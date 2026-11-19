@@ -91,8 +91,8 @@
             background: #1F1B16; color: #fff; border-radius: 999px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
     .chip { max-width: calc(100vw - 36px); box-sizing: border-box; }
     .chip span { padding-right: 6px; }
-    .chip.busy { padding-bottom: 13px; overflow: hidden; }
-    .chip .bar { position: absolute; left: 14px; right: 14px; bottom: 6px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden; }
+    .chip.busy { min-width: 190px; padding: 11px 16px 19px; border-radius: 14px; font-size: 14px; overflow: hidden; }
+    .chip .bar { position: absolute; left: 16px; right: 16px; bottom: 9px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.18); overflow: hidden; }
     .chip .bar::after { content: ''; position: absolute; top: 0; bottom: 0; width: 38%; border-radius: 3px; background: #E09A2E; animation: slide 1.3s ease-in-out infinite; }
     @keyframes slide { from { left: -40%; } to { left: 100%; } }
     .chip button + button { background: #4A433B; }
@@ -256,7 +256,7 @@
   }
 
   // After a reload in the middle of a wait the page is the old one again: put the
-  // changes that are on their way back on it, with their outline.
+  // changes that are on their way back on it.
   let restored = false;
   function restore(checks) {
     if (restored) return;
@@ -276,7 +276,6 @@
           if (!node || !c.from) continue;
           node.textContent = node.textContent.replace(c.from, () => c.to);
         }
-        markChanged(el);
       } catch (_) { /* the page changed under us */ }
     }
   }
@@ -325,7 +324,7 @@
   function submitNow() {
     watching += 1;
     clearTimeout(watchTimer);
-    setChip('送出中', [], true);
+    setChip('送出中，正在推上去…', [], true);
     call('POST', '/submit', { url: location.href }, WORK_TIMEOUT_MS)
       .then((data) => showState({ count: 0, delivery: data.delivery }))
       .catch((err) => {
@@ -417,8 +416,7 @@
   }
 
   // The new words and look show at once, so there is nothing to sit and wait for.
-  // The dashed outline says "changed, not live yet"; it goes away with the reload
-  // that happens once the site really serves the change.
+  // Nothing is drawn around the changed spot: the chip, bottom right, says how far it got.
   function swapOnPage(range, to) {
     try {
       const node = range.startContainer;
@@ -429,14 +427,6 @@
       const trail = picked.length - picked.trimEnd().length;
       node.textContent = full.slice(0, range.startOffset + lead) + to + full.slice(range.endOffset - trail);
     } catch (_) { /* the page changed under us; the reload will show it */ }
-  }
-
-  function markChanged(el) {
-    try {
-      el.style.outline = '2px dashed #E09A2E';
-      el.style.outlineOffset = '3px';
-      el.title = '已改，還沒上線。上線後這一頁會自己重新整理';
-    } catch (_) { /* the page changed under us */ }
   }
 
   const lookWords = (look) => [
@@ -536,7 +526,6 @@
       keepPreview = true;
       closeBox();
       if (to) swapOnPage(range, to);
-      markChanged(el);
       rememberHost();
       showState({ count: data.pending });
       submitNow();                                             // one step: changing it is sending it

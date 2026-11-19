@@ -90,15 +90,17 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' 
   assert.equal(loads, 0, 'did not take the other 先用再說 for the change');
   assert.equal(await page.getByText('已上線').count(), 0);
 
-  // 2. F5 in the middle: the change that is on its way is put back, outline and all
+  // 2. F5 in the middle: the change that is on its way is put back
   await page.reload();
-  await page.waitForFunction(() => document.getElementById('t').textContent === '先用再說' && /dashed/.test(document.getElementById('t').style.outline), null, { timeout: 10000 });
-  assert.equal(await outline('#dup'), '', 'only the changed spot is marked');
+  await page.waitForFunction(() => document.getElementById('t').textContent === '先用再說' && document.getElementById('t').style.outline === '', null, { timeout: 10000 });
+  assert.equal(await outline('#dup'), '', 'nothing is drawn around anything');
   assert.match(liveHtml(), /立即免費開始/, 'still not deployed: what is shown was put back by the script');
 
   // the deploy lands: reload by itself, no outline left
   let before = loads;
   await page.getByText('已上線 ✓').waitFor({ timeout: 30000 });
+  for (let i = 0; i < 150 && loads <= before; i += 1) await page.waitForTimeout(100);   // the reload itself
+  for (let i = 0; i < 150 && loads <= before; i += 1) await page.waitForTimeout(100);   // the reload itself
   await page.waitForFunction(() => document.getElementById('t').style.outline === '' && document.getElementById('t').textContent === '先用再說', null, { timeout: 15000 });
   assert.ok(loads > before, 'reloaded by itself');
   await page.waitForTimeout(1500);
@@ -113,9 +115,11 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' 
   assert.doesNotMatch(liveHtml(), /id="s"[^>]*style=|style=[^>]*id="s"/, 'look not deployed yet');
   await page.screenshot({ path: shotPath });
   await page.reload();                                   // F5: the look comes back as well
-  await page.waitForFunction(() => document.getElementById('s').style.fontSize !== '' && /dashed/.test(document.getElementById('s').style.outline), null, { timeout: 10000 });
+  await page.waitForFunction(() => document.getElementById('s').style.fontSize !== '' && document.getElementById('s').style.outline === '', null, { timeout: 10000 });
   before = loads;
   await page.getByText('已上線 ✓').waitFor({ timeout: 30000 });
+  for (let i = 0; i < 150 && loads <= before; i += 1) await page.waitForTimeout(100);   // the reload itself
+  for (let i = 0; i < 150 && loads <= before; i += 1) await page.waitForTimeout(100);   // the reload itself
   await page.waitForFunction(() => document.getElementById('s').style.outline === '' && document.getElementById('s').style.fontSize !== '', null, { timeout: 15000 });
   assert.ok(loads > before, 'reloaded by itself after the look went live');
   assert.match(liveHtml(), /<p style="[^"]*font-size[^"]*" id="s">|<p id="s" style="[^"]*font-size/);

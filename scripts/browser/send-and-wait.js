@@ -81,7 +81,7 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' 
   let loads = 0;
   page.on('load', () => { loads += 1; });
   await change('#t', '先用再說');                 // Enter sends by itself
-  await page.waitForFunction(() => document.getElementById('t').textContent === '先用再說' && /dashed/.test(document.getElementById('t').style.outline));   // new words at once, marked as not live
+  await page.waitForFunction(() => document.getElementById('t').textContent === '先用再說' && document.getElementById('t').style.outline === '');   // new words at once, nothing drawn around them
   assert.match(fs.readFileSync(path.join(live, 'index.html'), 'utf8'), /立即免費開始/);
   await page.getByText('已送出，等網站更新').waitFor();
   // the second one is sent straight from the box
@@ -101,12 +101,14 @@ const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' 
   // a reload in the middle picks the wait up again
   await page.reload();
   await page.getByText('已送出，等網站更新').waitFor();
-  await page.waitForFunction(() => document.getElementById('t').textContent === '先用再說' && /dashed/.test(document.getElementById('t').style.outline));   // put back after the reload
+  await page.waitForFunction(() => document.getElementById('t').textContent === '先用再說' && document.getElementById('t').style.outline === '');   // put back after the reload
   assert.match(fs.readFileSync(path.join(live, 'index.html'), 'utf8'), /立即免費開始/, 'the site itself is still the old one');
 
   // the deploy lands: it notices, says so, and reloads by itself onto the new words
   const before = loads;
   await page.getByText('已上線 ✓').waitFor({ timeout: 30000 });
+  for (let i = 0; i < 150 && loads <= before; i += 1) await page.waitForTimeout(100);   // the reload itself
+  for (let i = 0; i < 150 && loads <= before; i += 1) await page.waitForTimeout(100);   // the reload itself
   await page.screenshot({ path: shotPath.replace('.png', '-live.png') });
   await page.waitForFunction(() => document.getElementById('t').style.outline === '' && document.getElementById('t').textContent === '先用再說' && document.getElementById('j').textContent === '現在就試', null, { timeout: 15000 });
   assert.ok(loads > before, 'reloaded by itself');
