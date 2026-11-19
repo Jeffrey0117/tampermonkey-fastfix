@@ -84,10 +84,10 @@
                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .box .choice:hover { background: #FCF1DD; }
     .box .choice b { display: block; font: 700 12px/1.5 'Noto Sans TC', system-ui, sans-serif; color: #A49A8E; }
-    .toast { z-index: 2147483647; right: 18px; bottom: 18px; max-width: 340px; padding: 10px 14px; background: #1F1B16; color: #fff;
+    .toast { z-index: 2147483647; right: 18px; bottom: 66px; max-width: 340px; padding: 10px 14px; background: #1F1B16; color: #fff;
              border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.25); word-break: break-all; }
     .toast.bad { background: #B4412F; }
-    .chip { z-index: 2147483646; left: 18px; bottom: 18px; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px;
+    .chip { z-index: 2147483646; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px;
             background: #1F1B16; color: #fff; border-radius: 999px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
     .chip { max-width: calc(100vw - 36px); box-sizing: border-box; }
     .chip span { padding-right: 6px; }
@@ -224,7 +224,7 @@
       .then((results) => results.every(Boolean));
   }
 
-  // ---- the chip, bottom left: what is not sent yet, and how far the last send got ----
+  // ---- the chip, bottom right: what is not sent yet, and how far the last send got ----
   let watching = 0;                      // changes whenever the chip is redrawn, so an old wait stops
   let watchTimer = 0;
 
@@ -337,13 +337,26 @@
     return { text: node.textContent.trim(), range };
   }
 
-  // The page keeps showing what the site really serves. A changed piece only gets
-  // a dashed outline, so the new words appearing is proof that it went live.
-  function markChanged(el, to) {
+  // The new words and look show at once, so there is nothing to sit and wait for.
+  // The dashed outline says "changed, not live yet"; it goes away with the reload
+  // that happens once the site really serves the change.
+  function swapOnPage(range, to) {
+    try {
+      const node = range.startContainer;
+      if (node !== range.endContainer || node.nodeType !== Node.TEXT_NODE) return;
+      const full = node.textContent;
+      const picked = full.slice(range.startOffset, range.endOffset);
+      const lead = picked.length - picked.trimStart().length;
+      const trail = picked.length - picked.trimEnd().length;
+      node.textContent = full.slice(0, range.startOffset + lead) + to + full.slice(range.endOffset - trail);
+    } catch (_) { /* the page changed under us; the reload will show it */ }
+  }
+
+  function markChanged(el) {
     try {
       el.style.outline = '2px dashed #E09A2E';
       el.style.outlineOffset = '3px';
-      el.title = to ? '已改成「' + to + '」，上線後才會變' : '樣式已改，上線後才會變';
+      el.title = '已改，還沒上線。上線後這一頁會自己重新整理';
     } catch (_) { /* the page changed under us */ }
   }
 
@@ -397,7 +410,8 @@
     const original = { fontSize: el.style.fontSize, fontWeight: el.style.fontWeight, color: el.style.color };
     let look = {};
     let lookSaved = false;
-    undoPreview = () => Object.assign(el.style, original);
+    let keepPreview = false;
+    undoPreview = () => { if (!keepPreview) Object.assign(el.style, original); };
 
     const preview = (change) => {
       look = { ...look, ...change };
@@ -440,8 +454,10 @@
     tools.lastChild.className = 'go';
 
     const finish = (data, to) => {
+      keepPreview = true;
       closeBox();
-      markChanged(el, to);
+      if (to) swapOnPage(range, to);
+      markChanged(el);
       rememberHost();
       showState({ count: data.pending });
       submitNow();                                             // one step: changing it is sending it
