@@ -1,0 +1,34 @@
+{
+  "repo": 1,
+  "name": "tampermonkey-fastfix",
+  "what": "在自己的網站上按住 Alt 點一段字、打新的字，原始碼裡的那段字就被換掉；累積幾處後一次 commit 加 push。不經過 AI。",
+  "kind": "tool",
+  "status": "building",
+  "work": {
+    "guide": "README.md",
+    "run": "npm start",
+    "test": "npm test"
+  },
+  "offers": [
+    {
+      "id": "fix",
+      "what": "給一段舊字、一段新字和所在網頁的網址，在本機專案資料夾的 git repo 裡找到那段字並換掉（還沒 commit）。想從別的工具做同樣的字串替換時用。",
+      "how": "http",
+      "http": {
+        "method": "POST",
+        "path": "/fix",
+        "auth": "bearer",
+        "params": {
+          "type": "object",
+          "required": ["text", "to", "url"],
+          "properties": {
+            "text": { "type": "string" },
+            "to": { "type": "string" },
+            "url": { "type": "string" },
+            "pick": { "type": "object" }
+          }
+        }
+      }
+    }
+  ]
+}
