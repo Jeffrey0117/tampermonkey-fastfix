@@ -1,5 +1,6 @@
 'use strict';
 const fs = require('node:fs');
+const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 // What happens once the edits are pushed, so the site really shows them.
@@ -54,9 +55,15 @@ async function askCloudpipe(cloudpipe, id) {
 }
 
 // Started and left alone: the command may restart this very service.
+// On Windows a detached shell opens a black window of its own, so the command goes
+// through a windowless script host instead (scripts/run-hidden.vbs).
+const RUN_HIDDEN = path.join(__dirname, '..', '..', 'scripts', 'run-hidden.vbs');
 function runCommand(repo, command) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, { cwd: repo, shell: true, detached: true, stdio: 'ignore', windowsHide: true });
+    const base = { cwd: repo, detached: true, stdio: 'ignore', windowsHide: true };
+    const child = process.platform === 'win32'
+      ? spawn('wscript', ['//B', '//Nologo', RUN_HIDDEN], { ...base, env: { ...process.env, FASTFIX_RUN: command } })
+      : spawn(command, { ...base, shell: true });
     child.once('error', reject);
     child.once('spawn', () => { child.unref(); resolve(); });
   });
