@@ -49,6 +49,7 @@
 |---|---|
 | `fastfix.user.js` | 裝進 Tampermonkey 的那支。只做一件事：每次開網頁去本機服務拿 `client.js` 來跑，所以裝一次就好，之後不用更新 |
 | `client.js` | 真正做事的程式：接 Alt + 點、畫輸入框、把「舊字 → 新字」送出去。改了它，重新整理網頁就是新的 |
+| `src/fix/element.js` | Tailwind + JSX 專案改樣式：用頁面上的標籤與 class 認出是原始碼裡哪個標籤，換掉它的 class |
 | `server.js` | 本機服務：只聽 `127.0.0.1:4480`，在你的 repo 裡找字、換掉、commit、push。Node，零依賴 |
 
 ## 安裝

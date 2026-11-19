@@ -1,10 +1,11 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { isDirty, commitFiles, push } = require('./git');
+const { isDirty, commitFiles, push, catchUp } = require('./git');
 const { matchesInRepo } = require('./search');
 const { newRiskyChars, replaceAt, contextScore } = require('./match');
-const { parseLook, describeLook, applyLook } = require('./style');
+const { parseLook, describeLook, applyLook, usesTailwind } = require('./style');
+const { parseMark, restyleByElement } = require('./element');
 const { runAfter } = require('./after-send');
 const { LOOK_MARK, isLookEdit, nextDelivery, openDelivery, closeDelivery } = require('./delivery');
 const { readState, writeState, repoPending, withPending, withSent, withDelivery } = require('./store');
@@ -90,6 +91,11 @@ async function locate({ stateDir }, input) {
   const repo = projectFor(state, host);
   if (!repo) return { reply: reply(200, { ok: true, status: 'unset', host }) };
   const repoName = path.basename(repo);
+  try {
+    await catchUp(repo);
+  } catch (err) {
+    return { reply: refuse(409, `${repoName} 比線上的舊，自動更新失敗：${err.message}`) };
+  }
 
   // The page only shows new words once they are live. Until then a click on the
   // old words means the words an earlier edit turned them into.
@@ -100,7 +106,7 @@ async function locate({ stateDir }, input) {
     current = becameWhat(state, repo, from);
     if (current !== from) matches = await matchesInRepo(repo, current);
     if (!matches.length && earlier) return { reply: reply(200, { ok: true, status: 'stale', repoName, from: earlier.from, to: earlier.to }) };
-    if (!matches.length) return { reply: reply(200, { ok: true, status: 'notfound', repoName }) };
+    if (!matches.length) return { reply: reply(200, { ok: true, status: 'notfound', repoName }), missing: { state, repo, repoName, from } };
   }
 
   const pick = input.pick && typeof input.pick === 'object' ? input.pick : null;
@@ -125,7 +131,8 @@ async function applyChange({ stateDir }, { state, repo, repoName, match }, chang
   if (result.reason) return reply(200, { ok: true, status: 'cant', reason: result.reason });
   fs.writeFileSync(full, result.content, 'utf8');
 
-  const next = withPending(state, repo, { ...pending, edits: [...pending.edits, { file, ...record, at: new Date().toISOString() }] });
+  const wrote = result.classes ? { classes: result.classes } : {};
+  const next = withPending(state, repo, { ...pending, edits: [...pending.edits, { file, ...record, ...wrote, at: new Date().toISOString() }] });
   writeState(stateDir, next);
   return reply(200, { ok: true, status: 'done', repoName, file, line: match.line, pending: pendingCount(next, repo) });
 }
@@ -146,15 +153,27 @@ async function edit(config, input) {
   return applyChange(config, where.found, (content) => ({ content: replaceAt(content, match.index, match.length, to) }), { from: current, to, page: pageOf(input.url), path: spotOf(input.path) });
 }
 
+const lineAt = (repo, match) => fs.readFileSync(path.join(repo, match.file), 'utf8').slice(0, match.index).split('\n').length;
+
 async function restyle(config, input) {
   const look = parseLook(input.look);
   if (!look) return refuse(400, '樣式看不懂');
   const where = await locate(config, input);
+  // The words may come from a database or a list further up the file; the element that
+  // shows them is still in the project, and the page says which one it is.
+  const base = where.found || where.missing;
+  if (!base) return where.reply;
+  const record = { from: base.from, to: `${LOOK_MARK}${describeLook(look)}`, page: pageOf(input.url), path: spotOf(input.path), look: cssLook(look) };
+  const mark = parseMark(input.mark);
+  if (mark && usesTailwind(base.repo)) {
+    const hint = where.found ? { text: base.from, file: base.match.file, line: lineAt(base.repo, base.match) } : { text: base.from };
+    const done = restyleByElement(base.repo, mark, look, hint);
+    if (done && done.reason) return reply(200, { ok: true, status: 'cant', reason: done.reason });
+    if (done) return applyChange(config, { ...base, match: { file: done.file } }, () => ({ content: done.content, classes: done.classes }), record);
+  }
   if (where.reply) return where.reply;
-  const { repo, match, from } = where.found;
-  return applyChange(config, where.found,
-    (content) => applyLook({ repo, file: match.file, content, match, look }),
-    { from, to: `${LOOK_MARK}${describeLook(look)}`, page: pageOf(input.url), path: spotOf(input.path), look: cssLook(look) });
+  const { repo, match } = where.found;
+  return applyChange(config, where.found, (content) => applyLook({ repo, file: match.file, content, match, look }), record);
 }
 
 function pending({ stateDir }, input) {

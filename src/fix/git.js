@@ -35,6 +35,23 @@ async function commitFiles(repo, files, message) {
   return stdout.trim();
 }
 
+// A project that another machine pushed to is behind: words added there are not
+// here yet, and a push from here would be refused. Fast-forward only, so nothing
+// of the person's own is ever rewritten; anything else is reported, not forced.
+const FETCH_EVERY_MS = 30000;
+const fetchedAt = new Map();
+async function catchUp(repo) {
+  const upstream = await git(repo, ['rev-parse', '--abbrev-ref', '@{u}'], { okCodes: [0, 128] });
+  if (upstream.code !== 0) return 0;                                   // nothing to follow
+  if (Date.now() - (fetchedAt.get(repo) || 0) > FETCH_EVERY_MS) {
+    try { await git(repo, ['fetch', '--quiet']); } catch (_) { return 0; }   // offline: carry on with what is here
+    fetchedAt.set(repo, Date.now());
+  }
+  const behind = Number((await git(repo, ['rev-list', '--count', 'HEAD..@{u}'])).stdout.trim()) || 0;
+  if (behind) await git(repo, ['merge', '--ff-only', '--quiet', '@{u}'], { timeout: PUSH_TIMEOUT_MS });
+  return behind;
+}
+
 const push = (repo) => git(repo, ['push'], { timeout: PUSH_TIMEOUT_MS });
 
-module.exports = { grepFiles, isDirty, commitFiles, push };
+module.exports = { grepFiles, isDirty, commitFiles, push, catchUp };

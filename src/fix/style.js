@@ -17,6 +17,27 @@ const TAILWIND_CONFIGS = ['tailwind.config.js', 'tailwind.config.cjs', 'tailwind
 
 const isColorToken = (t) => /^text-/.test(t) && !SIZE_RE.test(t) && !TEXT_NOT_COLOR_RE.test(t);
 
+// "md:hover:text-lg" -> { variants: ['md', 'hover'], base: 'text-lg' }. A colon inside [...] is not a separator.
+function splitToken(token) {
+  const parts = [];
+  let depth = 0;
+  let last = 0;
+  for (let i = 0; i < token.length; i += 1) {
+    if (token[i] === '[') depth += 1;
+    else if (token[i] === ']') depth -= 1;
+    else if (token[i] === ':' && depth === 0) { parts.push(token.slice(last, i)); last = i + 1; }
+  }
+  return { variants: parts, base: token.slice(last) };
+}
+
+// Colours are recognised by shape, so a project's own "text-display" size is never taken for one.
+const COLOR_SHAPE_RE = /^text-(\[(#|rgb|hsl|var|color:)|inherit$|current$|transparent$|black\b|white\b|[a-z]+-\d{2,3}\b|[a-z-]*foreground\b|(primary|secondary|muted|accent|destructive|background|border|card|popover)\b)/;
+function tokenFamily(base) {
+  if (SIZE_RE.test(base)) return 'size';
+  if (WEIGHT_RE.test(base)) return 'weight';
+  return COLOR_SHAPE_RE.test(base) && !TEXT_NOT_COLOR_RE.test(base) ? 'color' : '';
+}
+
 function parseLook(input) {
   const look = {};
   if (!input || typeof input !== 'object') return null;
@@ -91,13 +112,14 @@ function rewriteWithClasses(tag, look, jsx) {
   const result = tailwindTokens(current, look);
   if (result.reason) return result;
   const value = result.tokens.join(' ');
+  const classes = result.tokens.filter((t) => !current.includes(t));
   if (!attr) {
     const at = tagNameEnd(tag);
-    return { tag: `${tag.slice(0, at)} ${jsx ? 'className' : 'class'}="${value}"${tag.slice(at)}` };
+    return { classes, tag: `${tag.slice(0, at)} ${jsx ? 'className' : 'class'}="${value}"${tag.slice(at)}` };
   }
   const quote = attr[2][0];
   const replaced = ` ${attr[1]}=${quote}${value}${quote}`;
-  return { tag: tag.slice(0, attr.index) + replaced + tag.slice(attr.index + attr[0].length) };
+  return { classes, tag: tag.slice(0, attr.index) + replaced + tag.slice(attr.index + attr[0].length) };
 }
 
 function rewriteWithStyle(tag, look, jsx) {
@@ -129,7 +151,7 @@ function applyLook({ repo, file, content, match, look }) {
   const jsx = JSX_EXTENSIONS.has(path.extname(file).toLowerCase());
   const result = usesTailwind(repo) ? rewriteWithClasses(tag.text, look, jsx) : rewriteWithStyle(tag.text, look, jsx);
   if (result.reason) return result;
-  return { content: content.slice(0, tag.start) + result.tag + content.slice(tag.end) };
+  return { content: content.slice(0, tag.start) + result.tag + content.slice(tag.end), ...(result.classes ? { classes: result.classes } : {}) };
 }
 
-module.exports = { parseLook, describeLook, applyLook };
+module.exports = { parseLook, describeLook, applyLook, usesTailwind, splitToken, tokenFamily, SIZE_TOKENS, WEIGHT_TOKENS };

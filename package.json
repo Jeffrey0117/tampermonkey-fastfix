@@ -1,6 +1,6 @@
 {
   "name": "tampermonkey-fastfix",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "Alt + 點網頁上的字，直接改掉自己網站原始碼裡的那段字。油猴腳本加一個本機服務。",
   "main": "server.js",
@@ -13,5 +13,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

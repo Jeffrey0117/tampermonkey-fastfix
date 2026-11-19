@@ -220,6 +220,7 @@
     const text = squash(el.textContent);
     if (check.look) {
       if (!check.text || !text.includes(squash(check.text))) return 'unknown';
+      if (check.classes) return check.classes.every((c) => el.classList.contains(c)) ? 'yes' : 'no';
       return sameLook(el, check.look) ? 'yes' : 'no';
     }
     if (text.includes(squash(check.to))) return 'yes';
@@ -354,6 +355,18 @@
   }
 
   // ---- what was clicked ----
+  // The element as the page shows it: its tag and classes, and those of everything
+  // around it. In a Tailwind project these are the very strings in the source, so
+  // the service can tell which element it is without anything added to the site.
+  const classesOf = (n) => (typeof n.className === 'string' ? n.className.split(/\s+/).filter(Boolean) : []);
+  function markOf(el) {
+    const chain = [];
+    for (let p = el.parentElement; p && p !== document.documentElement && chain.length < 20; p = p.parentElement) {
+      chain.push({ tag: p.localName, classes: classesOf(p) });
+    }
+    return { tag: el.localName, classes: classesOf(el), chain, width: window.innerWidth };
+  }
+
   // Where the element is on this page: unique here, and good until the page's layout changes.
   function pathOf(el) {
     const parts = [];
@@ -568,7 +581,7 @@
       if (!to && !lookChanged) { say('還沒改任何東西'); return; }
       const where = { text, url: location.href, path: pathOf(el), pick, ...near };
       const steps = [
-        lookChanged && (() => call('POST', '/style', { ...where, look }, WORK_TIMEOUT_MS).then((data) => {
+        lookChanged && (() => call('POST', '/style', { ...where, look, mark: markOf(el) }, WORK_TIMEOUT_MS).then((data) => {
           if (data.status === 'done') lookSaved = true;
           return data;
         })),
