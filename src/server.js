@@ -119,11 +119,15 @@ async function route(req, res, config) {
 
   // what the installed script runs: read from disk every time, so an edit is live on the next page load
   if (key === 'GET /client.js') {
+    process.stdout.write(`[fastfix] ${new Date().toISOString()} a page fetched client.js
+`);
     res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
     return res.end(fs.readFileSync(CLIENT_PATH));
   }
 
   if (FIX_ROUTES.includes(key)) {
+    process.stdout.write(`[fastfix] ${new Date().toISOString()} ${key}
+`);
     if (!tokenMatches(req, config.token)) {
       req.resume();
       throw new HttpError(401, '金鑰不對');

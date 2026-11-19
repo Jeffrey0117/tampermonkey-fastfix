@@ -200,6 +200,8 @@ test('setup page: lets the userscript re-read it, so an edit to this very page c
   try {
     const res = await fetch(s.url + '/setup');
     assert.match(res.headers.get('content-security-policy'), /connect-src 'self'/);
+    // without this the installed script cannot run on the setup page at all (seen in a real Tampermonkey)
+    assert.match(res.headers.get('content-security-policy'), /script-src 'unsafe-eval';/);
   } finally { await s.close(); }
 });
 

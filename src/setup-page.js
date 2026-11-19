@@ -120,11 +120,13 @@ function renderSetupPage({ token, sites, projects, roots, host = '', message = '
 `;
 }
 
+// script-src 'unsafe-eval': the page has no scripts of its own, but the installed fastFix script
+// runs the code it fetched from this service, and the browser counts that against the page.
 const SETUP_HEADERS = {
   'content-type': 'text/html; charset=utf-8',
   'cache-control': 'no-store',
   'x-frame-options': 'DENY',
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",
+  'content-security-policy': "default-src 'none'; script-src 'unsafe-eval'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",
   'referrer-policy': 'no-referrer',
   'cross-origin-resource-policy': 'same-origin',
 };
