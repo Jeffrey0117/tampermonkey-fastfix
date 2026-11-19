@@ -84,7 +84,7 @@ test('send: leaves a delivery that waits until the page is seen with the new wor
     const sent = await s.call('POST', '/submit', { url: PAGE });
     assert.equal(sent.status, 200);
     assert.deepEqual({ status: sent.json.delivery.status, checks: sent.json.delivery.checks },
-      { status: 'waiting', checks: [{ page: PAGE, to: '先用再說' }] });
+      { status: 'waiting', checks: [{ page: PAGE, path: '', from: '立即免費開始', to: '先用再說' }] });
 
     const open = await s.call('GET', `/pending?host=${HOST}`);
     assert.equal(open.json.count, 0);
@@ -105,7 +105,7 @@ test('send: words changed twice are only looked for in their last form; look-onl
     await s.call('POST', '/style', { text: '了解方案', look: { fontWeight: '700' }, url: PAGE });
     const sent = await s.call('POST', '/submit', { url: PAGE });
     assert.equal(sent.json.count, 3);
-    assert.deepEqual(sent.json.delivery.checks, [{ page: PAGE, to: '馬上開始' }]);
+    assert.deepEqual(sent.json.delivery.checks, [{ page: PAGE, path: '', from: '立即免費開始', to: '馬上開始' }], 'one check, from the first words to the last');
   } finally { await s.close(); }
 });
 
@@ -134,7 +134,7 @@ test('send: when asking for the deploy fails the delivery says so, and sending a
     const again = await s.call('POST', '/submit', { url: PAGE });
     assert.equal(again.status, 200);
     assert.equal(down.seen.length, 2);
-    assert.deepEqual(again.json.delivery.checks, [{ page: PAGE, to: '先用再說' }], 'still knows what to look for');
+    assert.deepEqual(again.json.delivery.checks.map((c) => c.to), ['先用再說'], 'still knows what to look for');
     assert.equal(git(s.shop, 'rev-list', '--count', 'HEAD').trim(), '2', 'no second commit');
   } finally { await s.close(); await down.close(); }
 });
@@ -217,5 +217,29 @@ test('the installed script is only a loader; the code it runs comes fresh from t
     assert.match(code, /\/submit/);
     assert.doesNotMatch(code, /==UserScript==/);
     new Function(code);   // it must parse on its own, the loader runs it this way
+  } finally { await s.close(); }
+});
+
+test('a check remembers where on the page the change is; a look-only change can be checked too', async () => {
+  const s = await boot();
+  try {
+    const spot = 'body > main:nth-child(1) > h1:nth-child(2)';
+    await s.call('POST', '/fix', { text: '立即免費開始', to: '先用再說', url: PAGE, path: spot });
+    await s.call('POST', '/style', { text: '先用再說', look: { fontSize: '48px', color: '#B4412F' }, url: PAGE, path: spot });
+    await s.call('POST', '/style', { text: '先用再說', look: { fontWeight: '800' }, url: PAGE, path: spot });
+    const sent = await s.call('POST', '/submit', { url: PAGE });
+    assert.deepEqual(sent.json.delivery.checks, [
+      { page: PAGE, path: spot, from: '立即免費開始', to: '先用再說' },
+      { page: PAGE, path: spot, text: '先用再說', look: { fontSize: '48px', color: '#b4412f', fontWeight: '800' } },
+    ]);
+  } finally { await s.close(); }
+});
+
+test('a path that is not a plain chain of positions is dropped, not stored', async () => {
+  const s = await boot();
+  try {
+    await s.call('POST', '/fix', { text: '立即免費開始', to: '先用再說', url: PAGE, path: 'body > h1:nth-child(1), script[src*="x"]' });
+    const sent = await s.call('POST', '/submit', { url: PAGE });
+    assert.equal(sent.json.delivery.checks[0].path, '');
   } finally { await s.close(); }
 });

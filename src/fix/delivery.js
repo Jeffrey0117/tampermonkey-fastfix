@@ -12,26 +12,34 @@ const OPEN = ['waiting', 'failed'];
 
 const isLookEdit = (edit) => edit.to.startsWith(LOOK_MARK);
 
-// Words to look for on the page. Words that a later edit replaced again never show up.
-const replacedLater = (to, file, later) => later.some((e) => e.from === to && (!file || e.file === file));
-
-function checksFor(edits, fallbackPage) {
-  const words = edits.filter((e) => !isLookEdit(e));
-  return words
-    .filter((e, i) => !replacedLater(e.to, e.file, words.slice(i + 1)))
-    .map((e) => ({ page: e.page || fallbackPage, to: e.to }));
+// What to look for on the page after a send, one entry per changed spot:
+//   words  { page, path, from, to }     from = what the page showed before any of it
+//   look   { page, path, text, look }   look = the CSS the spot should carry
+// path is where the spot is on that page (a selector the userscript worked out).
+function addCheck(checks, edit, fallbackPage) {
+  const page = edit.page || fallbackPage;
+  const path = edit.path || '';
+  if (isLookEdit(edit)) {
+    if (!path || !edit.look) return checks;               // nothing to recognise it by
+    const same = (c) => c.look && c.page === page && c.path === path;
+    const earlier = checks.find(same);
+    return [...checks.filter((c) => !same(c)), { page, path, text: edit.from, look: { ...(earlier ? earlier.look : {}), ...edit.look } }];
+  }
+  // words changed again before they went live: one check, from the very first words to the last
+  const earlier = checks.find((c) => !c.look && c.to === edit.from);
+  return [...checks.filter((c) => c !== earlier),
+    { page, path: path || (earlier ? earlier.path : ''), from: earlier ? earlier.from : edit.from, to: edit.to }];
 }
 
 function nextDelivery(previous, edits, { commit, page, error }) {
   const carried = previous && OPEN.includes(previous.status) ? previous.checks : [];
-  const words = edits.filter((e) => !isLookEdit(e));
   return {
     at: new Date().toISOString(),
     commit,
     count: edits.length || (previous ? previous.count : 0),
     status: error ? 'failed' : 'waiting',
     error: error || '',
-    checks: [...carried.filter((c) => !replacedLater(c.to, '', words)), ...checksFor(edits, page)],
+    checks: edits.reduce((checks, e) => addCheck(checks, e, page), carried),
   };
 }
 

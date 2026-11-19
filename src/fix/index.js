@@ -22,6 +22,17 @@ function hostOf(url) {
 }
 
 // The page an edit was made on, without the #part: where to look for the new words later.
+// Where on the page the change is, as the userscript worked it out. Only plain
+// "tag:nth-child(n) > ..." chains are kept; anything else is dropped.
+const SPOT = /^body(?: > [a-z][a-z0-9-]*:nth-child\(\d{1,4}\)){1,60}$/;
+const spotOf = (value) => (typeof value === 'string' && SPOT.test(value) ? value : '');
+
+const cssLook = (look) => ({
+  ...(look.fontSize ? { fontSize: `${look.fontSize}px` } : {}),
+  ...(look.fontWeight ? { fontWeight: String(look.fontWeight) } : {}),
+  ...(look.color ? { color: look.color } : {}),
+});
+
 function pageOf(url) {
   try { const u = new URL(url); return u.origin + u.pathname + u.search; } catch (_) { return ''; }
 }
@@ -132,7 +143,7 @@ async function edit(config, input) {
   if (where.reply) return where.reply;
   const { match, from: current } = where.found;
   if (current === to) return refuse(400, '沒有改任何字');
-  return applyChange(config, where.found, (content) => ({ content: replaceAt(content, match.index, match.length, to) }), { from: current, to, page: pageOf(input.url) });
+  return applyChange(config, where.found, (content) => ({ content: replaceAt(content, match.index, match.length, to) }), { from: current, to, page: pageOf(input.url), path: spotOf(input.path) });
 }
 
 async function restyle(config, input) {
@@ -143,7 +154,7 @@ async function restyle(config, input) {
   const { repo, match, from } = where.found;
   return applyChange(config, where.found,
     (content) => applyLook({ repo, file: match.file, content, match, look }),
-    { from, to: `${LOOK_MARK}${describeLook(look)}`, page: pageOf(input.url) });
+    { from, to: `${LOOK_MARK}${describeLook(look)}`, page: pageOf(input.url), path: spotOf(input.path), look: cssLook(look) });
 }
 
 function pending({ stateDir }, input) {

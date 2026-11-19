@@ -203,25 +203,81 @@
     return [...firstTexts, ...secondTexts].map(squash);
   }
 
+  // One page, all the spots changed on it. Each spot is looked up where it was
+  // changed (its path), so the same words elsewhere on the page do not count.
+  //   yes      the spot shows the change
+  //   no       the spot is there and still shows the old thing
+  //   unknown  the spot cannot be found in what the server sends (drawn by scripts, or the page moved)
   const lastHtml = {};
-  async function pageShows(page, wanted, round) {
+  const spotIn = (doc, path) => { try { return doc && path ? doc.querySelector(path) : null; } catch (_) { return null; } };
+  function sameLook(el, look) {
+    const probe = document.createElement('span');
+    return Object.keys(look).every((k) => { probe.style[k] = look[k]; return el.style[k] && el.style[k] === probe.style[k]; });
+  }
+  function spotSays(doc, check) {
+    const el = spotIn(doc, check.path);
+    if (!el) return 'unknown';
+    const text = squash(el.textContent);
+    if (check.look) {
+      if (!check.text || !text.includes(squash(check.text))) return 'unknown';
+      return sameLook(el, check.look) ? 'yes' : 'no';
+    }
+    if (text.includes(squash(check.to))) return 'yes';
+    return check.from && text.includes(squash(check.from)) ? 'no' : 'unknown';
+  }
+
+  async function pageShows(page, checks, round) {
     let url = page;
     try { const u = new URL(page); url = location.origin + u.pathname + u.search; } catch (_) { /* keep as is */ }
     const html = await getText(url, 'no-store');
+    let doc = null;
+    try { doc = html ? new DOMParser().parseFromString(html, 'text/html') : null; } catch (_) { /* judged by the words alone */ }
+    const said = checks.map((c) => spotSays(doc, c));
+    // words whose spot could not be found: anywhere in the page or its scripts will do
+    const loose = checks.filter((c, i) => said[i] === 'unknown' && !c.look).map((c) => c.to);
     const squashed = squash(html);
-    let missing = wanted.filter((w) => !has(squashed, w));
+    let missing = loose.filter((w) => !has(squashed, w));
     if (missing.length && html && (html !== lastHtml[url] || round % DEEP_EVERY === 0)) {
       const scripts = await scriptTexts(html, url);
       missing = missing.filter((w) => !scripts.some((text) => has(text, w)));
     }
     lastHtml[url] = html;
-    return missing.length === 0;
+    const looksUnknown = checks.filter((c, i) => said[i] === 'unknown' && c.look).length;
+    if (said.includes('no') || missing.length) return 'waiting';
+    return looksUnknown === checks.length ? 'cant' : 'live';
   }
 
+  // 'live' when every page shows its changes, 'cant' when there is nothing that can be checked.
   function allLive(checks, round) {
     const pages = [...new Set(checks.map((c) => c.page))];
-    return Promise.all(pages.map((page) => pageShows(page, checks.filter((c) => c.page === page).map((c) => c.to), round)))
-      .then((results) => results.every(Boolean));
+    return Promise.all(pages.map((page) => pageShows(page, checks.filter((c) => c.page === page), round)))
+      .then((results) => (results.includes('waiting') ? 'waiting' : (results.every((r) => r === 'cant') ? 'cant' : 'live')));
+  }
+
+  // After a reload in the middle of a wait the page is the old one again: put the
+  // changes that are on their way back on it, with their outline.
+  let restored = false;
+  function restore(checks) {
+    if (restored) return;
+    restored = true;
+    const here = location.origin + location.pathname + location.search;
+    for (const c of checks) {
+      const el = c.page === here ? spotIn(document, c.path) : null;
+      if (!el) continue;
+      try {
+        if (c.look) {
+          if (!c.text || !squash(el.textContent).includes(squash(c.text))) continue;
+          Object.assign(el.style, c.look);
+        } else if (!el.textContent.includes(c.to)) {
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          let node = walker.nextNode();
+          while (node && !node.textContent.includes(c.from)) node = walker.nextNode();
+          if (!node || !c.from) continue;
+          node.textContent = node.textContent.replace(c.from, () => c.to);
+        }
+        markChanged(el);
+      } catch (_) { /* the page changed under us */ }
+    }
   }
 
   // ---- the chip, bottom right: what is not sent yet, and how far the last send got ----
@@ -246,10 +302,9 @@
   function watch(delivery, round, mine) {
     if (mine !== watching) return;
     const waited = Math.max(0, Math.round((Date.now() - Date.parse(delivery.at)) / 1000));
-    if (!delivery.checks.length) {
-      setChip('已送出 ✓ 這次只改樣式，沒辦法自動確認，等一下重新整理看看', [['好', () => settle('dismissed')]]);
-      return;
-    }
+    const cantTell = () => setChip('已送出 ✓ 這次改的地方沒辦法自動確認，等一下重新整理看看', [['好', () => settle('dismissed')]]);
+    if (!delivery.checks.length) { cantTell(); return; }
+    restore(delivery.checks);
     if (waited > GIVE_UP_S) {
       setChip('已送出，但等了 ' + Math.round(waited / 60) + ' 分鐘網站還是舊的', [
         ['再看一次', () => showState({ count: 0, delivery: { ...delivery, at: new Date().toISOString() } })],
@@ -260,7 +315,8 @@
     if (round === 0) setChip('已送出，等網站更新', [], true);
     allLive(delivery.checks, round).then((live) => {
       if (mine !== watching) return;
-      if (live) land();
+      if (live === 'live') land();
+      else if (live === 'cant') cantTell();
       else watchTimer = setTimeout(() => watch(delivery, round + 1, mine), WATCH_EVERY_MS);
     });
   }
@@ -298,6 +354,16 @@
   }
 
   // ---- what was clicked ----
+  // Where the element is on this page: unique here, and good until the page's layout changes.
+  function pathOf(el) {
+    const parts = [];
+    for (let n = el; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
+      if (!n.parentElement) return '';
+      parts.unshift(n.localName + ':nth-child(' + (Array.prototype.indexOf.call(n.parentElement.children, n) + 1) + ')');
+    }
+    return parts.length ? 'body > ' + parts.join(' > ') : '';
+  }
+
   function textNodeAt(x, y) {
     if (document.caretPositionFromPoint) {
       const pos = document.caretPositionFromPoint(x, y);
@@ -500,7 +566,7 @@
       const to = typed && typed !== text ? typed : '';
       const lookChanged = Object.keys(look).length > 0 && !lookSaved;
       if (!to && !lookChanged) { say('還沒改任何東西'); return; }
-      const where = { text, url: location.href, pick, ...near };
+      const where = { text, url: location.href, path: pathOf(el), pick, ...near };
       const steps = [
         lookChanged && (() => call('POST', '/style', { ...where, look }, WORK_TIMEOUT_MS).then((data) => {
           if (data.status === 'done') lookSaved = true;
