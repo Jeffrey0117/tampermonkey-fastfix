@@ -88,7 +88,7 @@ function renderSetupPage({ token, sites, projects, roots, host = '', message = '
   <p>按住 Alt 點網頁上的字，直接改掉原始碼我愛你</p>
 
   <h2>哪個網站改哪個專案</h2>
-  <p>先在這裡設好。設過的網站，Alt + 點就只會動那一個專案；沒設的網站不能改。<br>最後一欄是按「送出」之後要做什麼，網站才會真的變成新的。要改就用同一個網域再加一次。</p>
+  <p>先在這裡設好。設過的網站，Alt + 點就只會動那一個專案肏你媽<br>最後一欄是按「送出」之後要做什麼，網站才會真的變成新的。要改就用同一個網域再加一次。</p>
   ${note}
   <table>
     ${siteRows(sites, token)}
